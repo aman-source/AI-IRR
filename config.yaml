@@ -1,0 +1,50 @@
+# IRR Prefix Change Detection & Ticket Automation Configuration
+# =============================================================
+
+# IRR sources to query (in order of preference)
+# Currently using RIPE REST API which is publicly available
+# Other sources can be queried through RIPE's mirror
+irr_sources:
+  - RIPE
+
+# List of ASNs to monitor
+# Add any ASNs you want to track for prefix changes
+targets:
+  - AS15169    # Google
+  - AS16509    # Amazon
+  - AS8075     # Microsoft
+
+# IRR API settings (using RIPE REST API)
+radb:
+  base_url: "https://rest.db.ripe.net"
+  timeout_seconds: 60       # Request timeout
+  max_retries: 3            # Number of retry attempts
+
+# Database settings
+database:
+  # Path to SQLite database file
+  # Use relative or absolute path
+  path: "./data/irr.sqlite"
+
+# AT&T Ticketing API settings
+# Credentials should be provided via environment variables
+ticketing:
+  base_url: "${ABC_BASE_URL}"     # Set ABC_BASE_URL environment variable
+  api_token: "${ABC_TOKEN}"       # Set ABC_TOKEN environment variable
+  timeout_seconds: 30
+  max_retries: 3
+
+# Logging settings
+logging:
+  # Log level: DEBUG, INFO, WARNING, ERROR
+  level: "INFO"
+  # Log format: "json" for structured logging, "text" for human-readable
+  format: "json"
+  # Optional log file path (leave commented for console only)
+  # file: "./logs/irr-automation.log"
+
+# Diff settings
+diff:
+  # Compare against snapshot from N hours ago
+  # Default: 24 hours (daily comparison)
+  lookback_hours: 24
