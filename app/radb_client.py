@@ -1,8 +1,10 @@
 """IRR API client for fetching prefixes from Internet Routing Registries."""
 
 import logging
+import re
+import socket
 from dataclasses import dataclass, field
-from typing import List, Set, Tuple, Dict, Any
+from typing import List, Set, Tuple, Dict, Any, Optional
 
 import requests
 from tenacity import (
@@ -15,13 +17,18 @@ from tenacity import (
 
 logger = logging.getLogger("app.radb_client")
 
-# API endpoints for different IRR sources
-IRR_ENDPOINTS = {
-    'RIPE': 'https://rest.db.ripe.net',
-    'RADB': 'https://api.radb.net',  # Fallback - may not work
-    'NTTCOM': 'https://api.radb.net',  # Fallback - may not work
-    'ARIN': 'https://api.radb.net',  # Fallback - may not work
+# WHOIS servers for IRR sources (port 43)
+WHOIS_SERVERS = {
+    'RADB': 'whois.radb.net',
+    'ARIN': 'rr.arin.net',
+    'APNIC': 'whois.apnic.net',
+    'LACNIC': 'irr.lacnic.net',
+    'AFRINIC': 'whois.afrinic.net',
+    'NTTCOM': 'rr.ntt.net',
 }
+
+# RIPE uses REST API (more reliable than WHOIS for RIPE data)
+RIPE_REST_URL = 'https://rest.db.ripe.net'
 
 
 @dataclass
@@ -157,13 +164,123 @@ class RADBClient:
         """Execute the actual API query."""
         source_upper = source.upper()
 
-        # Use RIPE REST API for RIPE source
+        # Use RIPE REST API for RIPE source (most reliable)
         if source_upper == 'RIPE':
             return self._query_ripe_rest(target)
-        else:
-            # Try RIPE REST API with source parameter for other sources
-            # This works for sources mirrored by RIPE
-            return self._query_ripe_rest(target, source_lower=source.lower())
+
+        # Use WHOIS protocol for other IRR sources
+        if source_upper in WHOIS_SERVERS:
+            return self._query_whois(target, source_upper)
+
+        # Fallback: try RIPE REST API with source parameter for unknown sources
+        # This works for sources mirrored by RIPE
+        logger.warning(
+            f"Unknown IRR source {source}, trying RIPE mirror",
+            extra={'context': {'source': source, 'target': target}}
+        )
+        return self._query_ripe_rest(target, source_lower=source.lower())
+
+    def _query_whois(self, target: str, source: str) -> Tuple[Set[str], Set[str]]:
+        """
+        Query IRR via WHOIS protocol (port 43).
+
+        Args:
+            target: ASN to query (e.g., "AS15169").
+            source: IRR source name (e.g., "RADB").
+
+        Returns:
+            Tuple of (IPv4 prefixes, IPv6 prefixes).
+        """
+        server = WHOIS_SERVERS.get(source)
+        if not server:
+            raise RADBAPIError(f"No WHOIS server configured for source: {source}")
+
+        # WHOIS query format: "-i origin AS15169" returns route/route6 objects
+        # Some servers also support "-s SOURCE" to specify the source
+        query = f"-i origin {target}\r\n"
+
+        logger.debug(
+            f"Querying WHOIS server {server}:43",
+            extra={'context': {'server': server, 'target': target, 'source': source}}
+        )
+
+        try:
+            # Connect to WHOIS server
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.settimeout(self.timeout)
+            sock.connect((server, 43))
+
+            # Send query
+            sock.sendall(query.encode('utf-8'))
+
+            # Receive response
+            response_data = b''
+            while True:
+                chunk = sock.recv(4096)
+                if not chunk:
+                    break
+                response_data += chunk
+
+            sock.close()
+
+            response_text = response_data.decode('utf-8', errors='replace')
+
+        except socket.timeout:
+            raise RADBAPIError(f"WHOIS query to {server} timed out after {self.timeout}s")
+        except socket.error as e:
+            raise RADBAPIError(f"WHOIS connection to {server} failed: {e}")
+
+        return self._parse_whois_response(response_text)
+
+    def _parse_whois_response(self, response: str) -> Tuple[Set[str], Set[str]]:
+        """
+        Parse WHOIS response to extract route/route6 prefixes.
+
+        WHOIS responses contain objects in the format:
+            route:          192.0.2.0/24
+            origin:         AS15169
+            ...
+
+            route6:         2001:db8::/32
+            origin:         AS15169
+            ...
+
+        Args:
+            response: Raw WHOIS response text.
+
+        Returns:
+            Tuple of (IPv4 prefixes, IPv6 prefixes).
+        """
+        ipv4_prefixes: Set[str] = set()
+        ipv6_prefixes: Set[str] = set()
+
+        # Regex patterns to extract prefixes
+        # route: prefix (IPv4)
+        route_pattern = re.compile(r'^route:\s+(\S+)', re.MULTILINE | re.IGNORECASE)
+        # route6: prefix (IPv6)
+        route6_pattern = re.compile(r'^route6:\s+(\S+)', re.MULTILINE | re.IGNORECASE)
+
+        # Find all IPv4 routes
+        for match in route_pattern.finditer(response):
+            prefix = match.group(1).strip()
+            if prefix and '/' in prefix:
+                ipv4_prefixes.add(prefix)
+
+        # Find all IPv6 routes
+        for match in route6_pattern.finditer(response):
+            prefix = match.group(1).strip()
+            if prefix and '/' in prefix:
+                ipv6_prefixes.add(prefix)
+
+        logger.debug(
+            f"Parsed WHOIS response: {len(ipv4_prefixes)} IPv4, {len(ipv6_prefixes)} IPv6",
+            extra={'context': {
+                'ipv4_count': len(ipv4_prefixes),
+                'ipv6_count': len(ipv6_prefixes),
+            }}
+        )
+
+        return ipv4_prefixes, ipv6_prefixes
 
     def _query_ripe_rest(
         self,

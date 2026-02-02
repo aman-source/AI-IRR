@@ -2,10 +2,29 @@
 # =============================================================
 
 # IRR sources to query (in order of preference)
-# Currently using RIPE REST API which is publicly available
-# Other sources can be queried through RIPE's mirror
+# The tool supports querying multiple Internet Routing Registries:
+#
+# Regional Internet Registries (RIRs):
+#   - RIPE    : Europe, Middle East, Central Asia (uses REST API)
+#   - ARIN    : North America (uses WHOIS)
+#   - APNIC   : Asia Pacific (uses WHOIS)
+#   - LACNIC  : Latin America & Caribbean (uses WHOIS)
+#   - AFRINIC : Africa (uses WHOIS)
+#
+# Other IRRs:
+#   - RADB    : Merit Network's Routing Assets Database (uses WHOIS)
+#   - NTTCOM  : NTT Communications (uses WHOIS)
+#
+# Results from all sources are merged and deduplicated.
+# RIPE is queried via REST API; all others use WHOIS protocol (port 43).
 irr_sources:
-  - RIPE
+  - RIPE      # Primary source - uses fast REST API
+  - RADB      # Global - widely used by networks worldwide
+  - ARIN      # North America
+  - APNIC     # Asia Pacific
+  - LACNIC    # Latin America
+  - AFRINIC   # Africa
+  - NTTCOM    # NTT Communications
 
 # List of ASNs to monitor
 # Add any ASNs you want to track for prefix changes
@@ -14,10 +33,11 @@ targets:
   - AS16509    # Amazon
   - AS8075     # Microsoft
 
-# IRR API settings (using RIPE REST API)
+# IRR API settings
+# Base URL is used for RIPE REST API; WHOIS servers are hardcoded per source
 radb:
   base_url: "https://rest.db.ripe.net"
-  timeout_seconds: 60       # Request timeout
+  timeout_seconds: 60       # Request timeout (applies to both REST and WHOIS)
   max_retries: 3            # Number of retry attempts
 
 # Database settings
@@ -36,7 +56,7 @@ ticketing:
 
 # Logging settings
 logging:
-  # Log level: DEBUG, INFO, WARNING, ERROR
+  # Log level: DEBUG, INFO, WARNING, ERROR, CRITICAL
   level: "INFO"
   # Log format: "json" for structured logging, "text" for human-readable
   format: "json"

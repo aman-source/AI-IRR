@@ -4,13 +4,29 @@ A Python CLI tool that automatically detects routing prefix changes in Internet 
 
 ## Features
 
-- **Fetch Prefixes**: Query RADB API for IPv4 and IPv6 prefixes by ASN
-- **Multi-Source Support**: Query multiple IRR sources (RADB, RIPE, NTTCOM)
+- **Multi-Source IRR Queries**: Query multiple IRR sources including all Regional Internet Registries (RIRs) and major IRRs
+- **Dual Protocol Support**: Uses REST API for RIPE and WHOIS protocol for other sources
+- **Fetch Prefixes**: Query for IPv4 and IPv6 prefixes by ASN
 - **Snapshot Storage**: Persist prefix snapshots in SQLite for historical tracking
 - **Change Detection**: Compute diffs between snapshots to detect added/removed prefixes
 - **Ticket Automation**: Automatically create tickets when changes are detected
 - **Idempotency**: Prevent duplicate tickets using diff hashing
 - **Dry-Run Mode**: Test the workflow without creating actual tickets
+- **Transaction Support**: Atomic database operations for data integrity
+
+## Supported IRR Sources
+
+| Source | Type | Region/Scope | Protocol |
+|--------|------|--------------|----------|
+| **RIPE** | RIR | Europe, Middle East, Central Asia | REST API |
+| **RADB** | IRR | Global (Merit Network) | WHOIS |
+| **ARIN** | RIR | North America | WHOIS |
+| **APNIC** | RIR | Asia Pacific | WHOIS |
+| **LACNIC** | RIR | Latin America & Caribbean | WHOIS |
+| **AFRINIC** | RIR | Africa | WHOIS |
+| **NTTCOM** | IRR | NTT Communications | WHOIS |
+
+Results from all configured sources are merged and deduplicated automatically.
 
 ## Installation
 
@@ -65,11 +81,12 @@ export ABC_TOKEN=your-api-token-here
 ### config.yaml
 
 ```yaml
-# IRR sources to query
+# IRR sources to query (supports: RIPE, RADB, ARIN, APNIC, LACNIC, AFRINIC, NTTCOM)
 irr_sources:
-  - RADB
-  - RIPE
-  - NTTCOM
+  - RIPE      # Uses REST API
+  - RADB      # Uses WHOIS
+  - ARIN      # Uses WHOIS
+  - APNIC     # Uses WHOIS
 
 # ASNs to monitor
 targets:
@@ -77,10 +94,10 @@ targets:
   - AS16509    # Amazon
   - AS8075     # Microsoft
 
-# RADB API settings
+# API settings
 radb:
-  base_url: "https://api.radb.net"
-  timeout_seconds: 60
+  base_url: "https://rest.db.ripe.net"  # RIPE REST API endpoint
+  timeout_seconds: 60                    # Applies to both REST and WHOIS
   max_retries: 3
 
 # Database settings
@@ -96,12 +113,12 @@ ticketing:
 
 # Logging settings
 logging:
-  level: "INFO"
-  format: "json"  # or "text"
+  level: "INFO"          # DEBUG, INFO, WARNING, ERROR, CRITICAL
+  format: "json"         # "json" or "text"
 
 # Diff settings
 diff:
-  lookback_hours: 24
+  lookback_hours: 24     # Compare against snapshot from N hours ago
 ```
 
 ### Environment Variables
@@ -128,6 +145,9 @@ Fetch current prefixes for an ASN and store a snapshot:
 
 ```bash
 python -m app.cli fetch --target AS15169 --config config.yaml
+
+# With verbose output to see queries to each IRR source
+python -m app.cli fetch --target AS15169 --config config.yaml -v
 ```
 
 ### Compute Diff
@@ -212,19 +232,20 @@ To run daily checks for all configured ASNs:
 irr-automation/
 ├── app/
 │   ├── __init__.py        # Package initialization
-│   ├── config.py          # Configuration loading
+│   ├── config.py          # Configuration loading and validation
 │   ├── logger.py          # Structured logging
-│   ├── radb_client.py     # RADB API client
-│   ├── store.py           # SQLite database layer
+│   ├── radb_client.py     # IRR client (REST + WHOIS)
+│   ├── store.py           # SQLite database layer with transactions
 │   ├── diff.py            # Diff computation
 │   ├── ticketing.py       # Ticketing API client
 │   └── cli.py             # CLI entry point
 ├── tests/
 │   ├── __init__.py
-│   ├── test_store.py
-│   ├── test_radb_client.py
-│   ├── test_diff.py
-│   └── test_ticketing.py
+│   ├── test_cli.py        # CLI tests
+│   ├── test_store.py      # Database tests
+│   ├── test_radb_client.py # IRR client tests (including WHOIS)
+│   ├── test_diff.py       # Diff computation tests
+│   └── test_ticketing.py  # Ticketing API tests
 ├── data/                   # Database files (created at runtime)
 ├── logs/                   # Log files (created at runtime)
 ├── config.yaml             # Configuration file
@@ -239,13 +260,24 @@ irr-automation/
 
 Ensure `config.yaml` exists in the specified path or use the `--config` option to specify the correct path.
 
+### "Configuration validation failed"
+
+Check that:
+1. All IRR sources in `irr_sources` are valid (RIPE, RADB, ARIN, APNIC, LACNIC, AFRINIC, NTTCOM)
+2. Numeric fields (timeout, retries) are positive
+3. Logging level and format are valid
+
 ### "No snapshot found for target"
 
 Run the `fetch` command first to create an initial snapshot before running `diff` or `submit`.
 
 ### "Failed to fetch prefixes"
 
-Check your internet connection and verify that the RADB API is accessible. The tool will retry automatically on transient failures.
+Check your internet connection. For WHOIS-based sources, ensure port 43 outbound is not blocked. The tool will retry automatically on transient failures. Use `-v` flag to see detailed error messages.
+
+### "WHOIS query timed out"
+
+Some IRR servers may be slow or temporarily unavailable. Try increasing `timeout_seconds` in the config or removing the problematic source from `irr_sources`.
 
 ### "Ticket creation failed"
 
@@ -257,6 +289,13 @@ Verify that:
 ### Database Locked
 
 If you see "database is locked" errors, ensure only one instance of the tool is running at a time.
+
+## Architecture Notes
+
+- **RIPE REST API**: Used for RIPE source queries. Fast and reliable.
+- **WHOIS Protocol**: Used for all other sources (RADB, ARIN, APNIC, etc.). Connects to port 43 of each IRR's WHOIS server.
+- **Prefix Merging**: Results from all sources are combined using set union, so duplicates are automatically removed.
+- **Transaction Support**: Database operations can be wrapped in transactions for atomicity.
 
 ## License
 

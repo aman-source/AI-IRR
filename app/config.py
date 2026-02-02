@@ -175,7 +175,69 @@ def load_config(config_path: str) -> Config:
             lookback_hours=diff_raw.get('lookback_hours', config.diff.lookback_hours),
         )
 
+    # Validate configuration
+    validate_config(config)
+
     return config
+
+
+# Valid IRR sources that we know how to query
+VALID_IRR_SOURCES = {'RIPE', 'RADB', 'ARIN', 'APNIC', 'LACNIC', 'AFRINIC', 'NTTCOM'}
+
+
+class ConfigValidationError(ValueError):
+    """Raised when configuration validation fails."""
+    pass
+
+
+def validate_config(config: Config) -> None:
+    """
+    Validate configuration has required fields and valid values.
+
+    Args:
+        config: The configuration object to validate.
+
+    Raises:
+        ConfigValidationError: If validation fails.
+    """
+    errors = []
+
+    # Validate IRR sources are recognized
+    if config.irr_sources:
+        unknown_sources = set(s.upper() for s in config.irr_sources) - VALID_IRR_SOURCES
+        if unknown_sources:
+            errors.append(f"Unknown IRR sources: {unknown_sources}. Valid sources: {VALID_IRR_SOURCES}")
+    else:
+        errors.append("At least one IRR source must be configured")
+
+    # Validate numeric fields are positive
+    if config.radb.timeout_seconds <= 0:
+        errors.append("radb.timeout_seconds must be positive")
+    if config.radb.max_retries < 0:
+        errors.append("radb.max_retries must be non-negative")
+
+    if config.ticketing.timeout_seconds <= 0:
+        errors.append("ticketing.timeout_seconds must be positive")
+    if config.ticketing.max_retries < 0:
+        errors.append("ticketing.max_retries must be non-negative")
+
+    if config.diff.lookback_hours <= 0:
+        errors.append("diff.lookback_hours must be positive")
+
+    # Validate logging level
+    valid_levels = {'DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL'}
+    if config.logging.level.upper() not in valid_levels:
+        errors.append(f"logging.level must be one of: {valid_levels}")
+
+    # Validate logging format
+    valid_formats = {'json', 'text'}
+    if config.logging.format.lower() not in valid_formats:
+        errors.append(f"logging.format must be one of: {valid_formats}")
+
+    if errors:
+        raise ConfigValidationError(
+            "Configuration validation failed:\n  - " + "\n  - ".join(errors)
+        )
 
 
 def get_default_config() -> Config:

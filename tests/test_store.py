@@ -231,6 +231,88 @@ class TestDiffOperations:
         assert diff.has_changes is False
 
 
+class TestTransactions:
+    """Tests for transaction support."""
+
+    def test_transaction_commits(self, store):
+        """Test that transaction commits changes."""
+        with store.transaction():
+            store.save_snapshot(
+                target='AS99999',
+                target_type='asn',
+                irr_sources=['RIPE'],
+                ipv4_prefixes=['1.1.1.0/24'],
+                ipv6_prefixes=[],
+            )
+
+        # Should be retrievable after transaction
+        snapshot = store.get_latest_snapshot('AS99999')
+        assert snapshot is not None
+        assert snapshot.target == 'AS99999'
+
+    def test_transaction_rollback_on_error(self, store):
+        """Test that transaction rolls back on error."""
+        try:
+            with store.transaction():
+                store.save_snapshot(
+                    target='AS88888',
+                    target_type='asn',
+                    irr_sources=['RIPE'],
+                    ipv4_prefixes=['2.2.2.0/24'],
+                    ipv6_prefixes=[],
+                )
+                # Force an error
+                raise ValueError("Test error")
+        except ValueError:
+            pass
+
+        # Snapshot should not exist due to rollback
+        snapshot = store.get_latest_snapshot('AS88888')
+        assert snapshot is None
+
+    def test_transaction_multiple_operations(self, store):
+        """Test multiple operations in single transaction."""
+        with store.transaction():
+            snapshot_id = store.save_snapshot(
+                target='AS77777',
+                target_type='asn',
+                irr_sources=['RIPE'],
+                ipv4_prefixes=['3.3.3.0/24'],
+                ipv6_prefixes=[],
+            )
+            diff_id = store.save_diff(
+                new_snapshot_id=snapshot_id,
+                old_snapshot_id=None,
+                target='AS77777',
+                added_v4=['3.3.3.0/24'],
+                removed_v4=[],
+                added_v6=[],
+                removed_v6=[],
+                diff_hash='test_hash_77777',
+            )
+
+        # Both should exist
+        snapshot = store.get_snapshot_by_id(snapshot_id)
+        diff = store.get_diff_by_id(diff_id)
+        assert snapshot is not None
+        assert diff is not None
+
+    def test_commit_if_not_in_transaction(self, store):
+        """Test that operations commit immediately outside transaction."""
+        # This should commit immediately
+        snapshot_id = store.save_snapshot(
+            target='AS66666',
+            target_type='asn',
+            irr_sources=['RIPE'],
+            ipv4_prefixes=['4.4.4.0/24'],
+            ipv6_prefixes=[],
+        )
+
+        # Should be retrievable immediately
+        snapshot = store.get_latest_snapshot('AS66666')
+        assert snapshot is not None
+
+
 class TestTicketOperations:
     """Tests for ticket CRUD operations."""
 

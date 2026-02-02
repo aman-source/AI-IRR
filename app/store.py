@@ -4,9 +4,10 @@ import hashlib
 import json
 import sqlite3
 import time
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Optional, Generator
 
 
 @dataclass
@@ -140,6 +141,7 @@ class SnapshotStore:
             Path(db_path).parent.mkdir(parents=True, exist_ok=True)
 
         self._conn: Optional[sqlite3.Connection] = None
+        self._in_transaction: bool = False
 
     @property
     def conn(self) -> sqlite3.Connection:
@@ -159,6 +161,38 @@ class SnapshotStore:
         """Create database tables if they don't exist."""
         self.conn.executescript(SCHEMA_SQL)
         self.conn.commit()
+
+    @contextmanager
+    def transaction(self) -> Generator[sqlite3.Connection, None, None]:
+        """
+        Context manager for atomic transactions.
+
+        All database operations within the context will be committed
+        together, or rolled back if an exception occurs.
+
+        Usage:
+            with store.transaction():
+                store.save_snapshot(...)
+                store.save_diff(...)
+                store.save_ticket(...)
+
+        Yields:
+            The database connection.
+        """
+        self._in_transaction = True
+        try:
+            yield self.conn
+            self.conn.commit()
+        except Exception:
+            self.conn.rollback()
+            raise
+        finally:
+            self._in_transaction = False
+
+    def _commit_if_not_in_transaction(self) -> None:
+        """Commit the current transaction if not in a managed transaction."""
+        if not self._in_transaction:
+            self.conn.commit()
 
     # -------------------------------------------------------------------------
     # Snapshot operations
@@ -206,7 +240,7 @@ class SnapshotStore:
                 now,
             )
         )
-        self.conn.commit()
+        self._commit_if_not_in_transaction()
         return cursor.lastrowid
 
     def get_latest_snapshot(self, target: str) -> Optional[Snapshot]:
@@ -353,7 +387,7 @@ class SnapshotStore:
                 now,
             )
         )
-        self.conn.commit()
+        self._commit_if_not_in_transaction()
         return cursor.lastrowid
 
     def get_diff_by_hash(self, diff_hash: str) -> Optional[Diff]:
@@ -458,7 +492,7 @@ class SnapshotStore:
                 now,
             )
         )
-        self.conn.commit()
+        self._commit_if_not_in_transaction()
         return cursor.lastrowid
 
     def update_ticket_status(
@@ -492,7 +526,7 @@ class SnapshotStore:
                 ticket_id,
             )
         )
-        self.conn.commit()
+        self._commit_if_not_in_transaction()
 
     def get_ticket_for_diff(self, diff_id: int) -> Optional[Ticket]:
         """

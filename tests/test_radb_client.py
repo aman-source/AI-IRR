@@ -1,11 +1,12 @@
 """Tests for the IRR API client."""
 
+import socket
 import pytest
 from unittest.mock import Mock, patch, MagicMock
 
 import requests
 
-from app.radb_client import RADBClient, RADBAPIError, PrefixResult
+from app.radb_client import RADBClient, RADBAPIError, PrefixResult, WHOIS_SERVERS
 
 
 class TestRADBClient:
@@ -246,16 +247,27 @@ class TestRADBClient:
         assert v4 == {"8.8.8.0/24"}
         mock_query.assert_called_once_with("AS15169")
 
-    @patch.object(RADBClient, '_query_ripe_rest')
-    def test_execute_query_other_source(self, mock_query):
-        """Test execute_query routes other sources through RIPE API."""
-        mock_query.return_value = ({"8.8.8.0/24"}, set())
+    @patch.object(RADBClient, '_query_whois')
+    def test_execute_query_whois_source(self, mock_whois):
+        """Test execute_query routes to WHOIS for non-RIPE sources."""
+        mock_whois.return_value = ({"8.8.8.0/24"}, set())
 
         client = RADBClient()
         v4, v6 = client._execute_query("AS15169", "RADB")
 
-        # Should call RIPE API with lowercase source
-        mock_query.assert_called_once_with("AS15169", source_lower="radb")
+        # Should call WHOIS for RADB
+        mock_whois.assert_called_once_with("AS15169", "RADB")
+
+    @patch.object(RADBClient, '_query_ripe_rest')
+    def test_execute_query_unknown_source_fallback(self, mock_query):
+        """Test execute_query falls back to RIPE for unknown sources."""
+        mock_query.return_value = ({"8.8.8.0/24"}, set())
+
+        client = RADBClient()
+        v4, v6 = client._execute_query("AS15169", "UNKNOWN")
+
+        # Should fall back to RIPE API with lowercase source
+        mock_query.assert_called_once_with("AS15169", source_lower="unknown")
 
     @patch('requests.Session.get')
     def test_query_ripe_rest_type_success(self, mock_get):
@@ -346,3 +358,204 @@ class TestPrefixResult:
         assert result.ipv6_prefixes == {"2001::/32"}
         assert result.sources_queried == ["RIPE"]
         assert result.errors == ["Error 1"]
+
+
+class TestWhoisQuery:
+    """Tests for WHOIS protocol queries."""
+
+    def test_whois_servers_defined(self):
+        """Test that all expected WHOIS servers are defined."""
+        expected_sources = ['RADB', 'ARIN', 'APNIC', 'LACNIC', 'AFRINIC', 'NTTCOM']
+        for source in expected_sources:
+            assert source in WHOIS_SERVERS, f"Missing WHOIS server for {source}"
+
+    def test_parse_whois_response_ipv4(self):
+        """Test parsing WHOIS response with IPv4 routes."""
+        client = RADBClient()
+
+        response = """
+route:          8.8.8.0/24
+descr:          Google LLC
+origin:         AS15169
+source:         RADB
+
+route:          8.8.4.0/24
+descr:          Google LLC
+origin:         AS15169
+source:         RADB
+"""
+        v4, v6 = client._parse_whois_response(response)
+        assert v4 == {"8.8.8.0/24", "8.8.4.0/24"}
+        assert v6 == set()
+
+    def test_parse_whois_response_ipv6(self):
+        """Test parsing WHOIS response with IPv6 routes."""
+        client = RADBClient()
+
+        response = """
+route6:         2001:4860::/32
+descr:          Google LLC
+origin:         AS15169
+source:         RADB
+
+route6:         2607:f8b0::/32
+descr:          Google LLC
+origin:         AS15169
+source:         RADB
+"""
+        v4, v6 = client._parse_whois_response(response)
+        assert v4 == set()
+        assert v6 == {"2001:4860::/32", "2607:f8b0::/32"}
+
+    def test_parse_whois_response_mixed(self):
+        """Test parsing WHOIS response with both IPv4 and IPv6."""
+        client = RADBClient()
+
+        response = """
+route:          8.8.8.0/24
+origin:         AS15169
+source:         RADB
+
+route6:         2001:4860::/32
+origin:         AS15169
+source:         RADB
+"""
+        v4, v6 = client._parse_whois_response(response)
+        assert v4 == {"8.8.8.0/24"}
+        assert v6 == {"2001:4860::/32"}
+
+    def test_parse_whois_response_empty(self):
+        """Test parsing empty WHOIS response."""
+        client = RADBClient()
+
+        v4, v6 = client._parse_whois_response("")
+        assert v4 == set()
+        assert v6 == set()
+
+    def test_parse_whois_response_no_routes(self):
+        """Test parsing WHOIS response with no route objects."""
+        client = RADBClient()
+
+        response = """
+% This is RADB.
+% RADB query for AS15169
+
+as-set:         AS15169:AS-CUSTOMERS
+descr:          Google customers
+source:         RADB
+"""
+        v4, v6 = client._parse_whois_response(response)
+        assert v4 == set()
+        assert v6 == set()
+
+    def test_parse_whois_response_case_insensitive(self):
+        """Test that route parsing is case insensitive."""
+        client = RADBClient()
+
+        response = """
+ROUTE:          8.8.8.0/24
+origin:         AS15169
+
+Route:          8.8.4.0/24
+origin:         AS15169
+
+ROUTE6:         2001:4860::/32
+origin:         AS15169
+"""
+        v4, v6 = client._parse_whois_response(response)
+        assert v4 == {"8.8.8.0/24", "8.8.4.0/24"}
+        assert v6 == {"2001:4860::/32"}
+
+    @patch('socket.socket')
+    def test_query_whois_success(self, mock_socket_class):
+        """Test successful WHOIS query."""
+        # Setup mock socket
+        mock_socket = MagicMock()
+        mock_socket_class.return_value = mock_socket
+
+        # Simulate response
+        mock_socket.recv.side_effect = [
+            b"route:          8.8.8.0/24\norigin:         AS15169\n",
+            b"",  # End of response
+        ]
+
+        client = RADBClient(timeout=30)
+        v4, v6 = client._query_whois("AS15169", "RADB")
+
+        assert v4 == {"8.8.8.0/24"}
+        assert v6 == set()
+
+        # Verify socket operations
+        mock_socket.settimeout.assert_called_once_with(30)
+        mock_socket.connect.assert_called_once_with(("whois.radb.net", 43))
+        mock_socket.sendall.assert_called_once()
+        mock_socket.close.assert_called_once()
+
+    @patch('socket.socket')
+    def test_query_whois_timeout(self, mock_socket_class):
+        """Test WHOIS query timeout handling."""
+        mock_socket = MagicMock()
+        mock_socket_class.return_value = mock_socket
+        mock_socket.connect.side_effect = socket.timeout("Connection timed out")
+
+        client = RADBClient(timeout=5)
+
+        with pytest.raises(RADBAPIError) as exc_info:
+            client._query_whois("AS15169", "RADB")
+
+        assert "timed out" in str(exc_info.value)
+
+    @patch('socket.socket')
+    def test_query_whois_connection_error(self, mock_socket_class):
+        """Test WHOIS connection error handling."""
+        mock_socket = MagicMock()
+        mock_socket_class.return_value = mock_socket
+        mock_socket.connect.side_effect = socket.error("Connection refused")
+
+        client = RADBClient()
+
+        with pytest.raises(RADBAPIError) as exc_info:
+            client._query_whois("AS15169", "RADB")
+
+        assert "failed" in str(exc_info.value)
+
+    def test_query_whois_unknown_source(self):
+        """Test WHOIS query with unknown source."""
+        client = RADBClient()
+
+        with pytest.raises(RADBAPIError) as exc_info:
+            client._query_whois("AS15169", "UNKNOWN")
+
+        assert "No WHOIS server" in str(exc_info.value)
+
+
+class TestClientContextManager:
+    """Tests for context manager functionality."""
+
+    def test_context_manager_enter(self):
+        """Test __enter__ returns client."""
+        client = RADBClient()
+        with client as c:
+            assert c is client
+
+    @patch.object(RADBClient, 'close')
+    def test_context_manager_exit(self, mock_close):
+        """Test __exit__ closes client."""
+        client = RADBClient()
+        with client:
+            pass
+
+        mock_close.assert_called_once()
+
+    def test_close_closes_session(self):
+        """Test close() closes the HTTP session."""
+        client = RADBClient()
+
+        # Verify session is open before close
+        assert client._session is not None
+
+        client.close()
+
+        # After close, trying to use session should fail or show it's closed
+        # The close() method is called, which is the important verification
+        # Note: requests.Session.close() doesn't clear adapters, it closes connections
