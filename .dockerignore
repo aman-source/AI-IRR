@@ -1,0 +1,14 @@
+.git
+__pycache__
+*.pyc
+data/
+logs/
+.coverage
+.pytest_cache
+*.sqlite
+.venv
+.env
+architecture/
+docs/
+tests/
+*.md

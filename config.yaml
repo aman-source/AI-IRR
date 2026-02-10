@@ -26,6 +26,13 @@ irr_sources:
   - AFRINIC   # Africa
   - NTTCOM    # NTT Communications
 
+# API Proxy Mode (optional)
+# When set, the CLI will call this deployed API for all IRR queries
+# instead of connecting to WHOIS/RIPE servers directly.
+# Useful when your local machine cannot reach WHOIS port 43 (e.g. VPN).
+# Can also be set via IRR_API_URL environment variable.
+# api_url: "https://your-deployed-api.example.com"
+
 # List of ASNs to monitor
 # Add any ASNs you want to track for prefix changes
 targets:

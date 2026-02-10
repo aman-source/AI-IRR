@@ -51,6 +51,7 @@ class Config:
     """Main configuration container."""
     irr_sources: List[str] = field(default_factory=lambda: ["RADB", "RIPE", "NTTCOM"])
     targets: List[str] = field(default_factory=list)
+    api_url: Optional[str] = None  # When set, proxy all IRR queries via this URL
     radb: RADBConfig = field(default_factory=RADBConfig)
     database: DatabaseConfig = field(default_factory=DatabaseConfig)
     ticketing: TicketingConfig = field(default_factory=TicketingConfig)
@@ -116,6 +117,12 @@ def load_config(config_path: str) -> Config:
     # Targets
     if 'targets' in raw_config:
         config.targets = raw_config['targets']
+
+    # API proxy URL (when set, IRR queries go through the deployed API)
+    if 'api_url' in raw_config:
+        config.api_url = raw_config['api_url'] or None
+    if os.environ.get('IRR_API_URL'):
+        config.api_url = os.environ['IRR_API_URL']
 
     # RADB config
     if 'radb' in raw_config:

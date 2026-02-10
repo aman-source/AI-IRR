@@ -11,8 +11,28 @@ from app.config import load_config, Config, LoggingConfig
 from app.logger import setup_logging, get_logger
 from app.store import SnapshotStore
 from app.radb_client import RADBClient
+from app.api_proxy_client import APIProxyClient
 from app.diff import compute_diff, format_diff_human, format_diff_json, DiffResult
 from app.ticketing import TicketingClient
+
+
+def create_irr_client(config: Config):
+    """Create the appropriate IRR client based on configuration.
+
+    Returns APIProxyClient when api_url is set (proxy mode),
+    otherwise returns RADBClient (direct mode).
+    """
+    if config.api_url:
+        return APIProxyClient(
+            api_url=config.api_url,
+            timeout=config.radb.timeout_seconds,
+            max_retries=config.radb.max_retries,
+        )
+    return RADBClient(
+        base_url=config.radb.base_url,
+        timeout=config.radb.timeout_seconds,
+        max_retries=config.radb.max_retries,
+    )
 
 
 def get_timestamp_str() -> str:
@@ -179,12 +199,8 @@ def cmd_fetch(config: Config, args: argparse.Namespace) -> int:
 
     print_output(f"Fetching prefixes for {target}...", args.json, args.quiet)
 
-    # Fetch prefixes
-    client = RADBClient(
-        base_url=config.radb.base_url,
-        timeout=config.radb.timeout_seconds,
-        max_retries=config.radb.max_retries,
-    )
+    # Fetch prefixes (uses API proxy if api_url is configured)
+    client = create_irr_client(config)
 
     try:
         result = client.fetch_prefixes(target, config.irr_sources)
@@ -406,11 +422,7 @@ def cmd_run(config: Config, args: argparse.Namespace) -> int:
     # Step 1: Fetch
     print_output(f"Fetching prefixes for {target}...", args.json, args.quiet)
 
-    client = RADBClient(
-        base_url=config.radb.base_url,
-        timeout=config.radb.timeout_seconds,
-        max_retries=config.radb.max_retries,
-    )
+    client = create_irr_client(config)
 
     try:
         fetch_result = client.fetch_prefixes(target, config.irr_sources)
