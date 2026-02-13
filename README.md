@@ -2,78 +2,69 @@
 
 A Python CLI tool that automatically detects routing prefix changes in Internet Routing Registry (IRR) databases and creates tickets in AT&T's ticketing system when changes are detected.
 
+Uses [BGPQ4](https://github.com/bgp/bgpq4) for IRR queries, which handles AS-SET expansion, prefix aggregation, and database selection in a single command.
+
 ## Features
 
-- **Multi-Source IRR Queries**: Query multiple IRR sources including all Regional Internet Registries (RIRs) and major IRRs
-- **Dual Protocol Support**: Uses REST API for RIPE and WHOIS protocol for other sources
-- **Fetch Prefixes**: Query for IPv4 and IPv6 prefixes by ASN
+- **BGPQ4-Powered Queries**: Single tool handles all IRR lookups via RADB (which mirrors all 5 RIRs)
+- **AS-SET Support**: Query AS-SETs (e.g., `AS-GOOGLE`) — BGPQ4 expands them automatically
+- **Prefix Aggregation**: Multiple specific prefixes are aggregated into summary routes (e.g., five /24s become one /22)
+- **IPv4 & IPv6**: Full dual-stack support
 - **Snapshot Storage**: Persist prefix snapshots in SQLite for historical tracking
 - **Change Detection**: Compute diffs between snapshots to detect added/removed prefixes
 - **Ticket Automation**: Automatically create tickets when changes are detected
 - **Idempotency**: Prevent duplicate tickets using diff hashing
 - **Dry-Run Mode**: Test the workflow without creating actual tickets
-- **Transaction Support**: Atomic database operations for data integrity
+- **Optional API**: FastAPI service for remote/shared access
 
-## Supported IRR Sources
+## Prerequisites
 
-| Source | Type | Region/Scope | Protocol |
-|--------|------|--------------|----------|
-| **RIPE** | RIR | Europe, Middle East, Central Asia | REST API |
-| **RADB** | IRR | Global (Merit Network) | WHOIS |
-| **ARIN** | RIR | North America | WHOIS |
-| **APNIC** | RIR | Asia Pacific | WHOIS |
-| **LACNIC** | RIR | Latin America & Caribbean | WHOIS |
-| **AFRINIC** | RIR | Africa | WHOIS |
-| **NTTCOM** | IRR | NTT Communications | WHOIS |
+- Python 3.10+
+- [WSL](https://learn.microsoft.com/en-us/windows/wsl/install) (Windows) with bgpq4 installed
+- pip
 
-Results from all configured sources are merged and deduplicated automatically.
+### Install bgpq4
+
+```bash
+# In WSL
+sudo apt update && sudo apt install -y bgpq4
+
+# Verify
+wsl bgpq4 -4 -j -A -S RADB -l pl AS15169
+```
 
 ## Installation
 
-### Prerequisites
-
-- Python 3.10 or higher
-- pip (Python package manager)
-
-### Setup
-
-1. Clone or download this repository:
 ```bash
-cd irr-automation
-```
+# Clone the repository
+cd AI-IRR
 
-2. Create and activate a virtual environment:
-```bash
+# Create virtual environment
 python -m venv .venv
+.venv\Scripts\activate    # Windows
+# source .venv/bin/activate  # Linux/Mac
 
-# Windows
-.venv\Scripts\activate
-
-# Linux/Mac
-source .venv/bin/activate
-```
-
-3. Install dependencies:
-```bash
+# Install dependencies
 pip install -r requirements.txt
 ```
 
-4. Configure the application:
-```bash
-# Copy and edit the configuration file
-cp config.yaml config.local.yaml
-# Edit config.local.yaml with your settings
-```
+## Quick Start
 
-5. Set environment variables for the ticketing API:
 ```bash
-# Windows
-set ABC_BASE_URL=https://abc.internal.att.com/api
-set ABC_TOKEN=your-api-token-here
+# 1. Initialize the database
+python -m app.cli init-db
 
-# Linux/Mac
-export ABC_BASE_URL=https://abc.internal.att.com/api
-export ABC_TOKEN=your-api-token-here
+# 2. Fetch prefixes for an ASN
+python -m app.cli fetch --target AS15169
+
+# 3. Fetch prefixes for an AS-SET
+python -m app.cli fetch --target AS-GOOGLE
+
+# 4. Run all-in-one (fetch + diff + ticket if changes)
+python -m app.cli run --target AS15169 --dry-run
+
+# 5. Run for all configured targets
+python -m app.cli run-all --dry-run
 ```
 
 ## Configuration
@@ -81,24 +72,19 @@ export ABC_TOKEN=your-api-token-here
 ### config.yaml
 
 ```yaml
-# IRR sources to query (supports: RIPE, RADB, ARIN, APNIC, LACNIC, AFRINIC, NTTCOM)
-irr_sources:
-  - RIPE      # Uses REST API
-  - RADB      # Uses WHOIS
-  - ARIN      # Uses WHOIS
-  - APNIC     # Uses WHOIS
+# BGPQ4 settings
+# RADB mirrors all 5 RIRs, so querying RADB alone is sufficient.
+bgpq4:
+  cmd: ["wsl", "bgpq4"]      # Command to invoke bgpq4
+  source: "RADB"              # IRR source (-S flag)
+  aggregate: true             # Aggregate prefixes (-A flag)
+  timeout_seconds: 120        # Subprocess timeout
 
-# ASNs to monitor
+# Targets to monitor — ASNs or AS-SETs
 targets:
   - AS15169    # Google
   - AS16509    # Amazon
   - AS8075     # Microsoft
-
-# API settings
-radb:
-  base_url: "https://rest.db.ripe.net"  # RIPE REST API endpoint
-  timeout_seconds: 60                    # Applies to both REST and WHOIS
-  max_retries: 3
 
 # Database settings
 database:
@@ -127,71 +113,60 @@ diff:
 |----------|-------------|----------|
 | `ABC_BASE_URL` | AT&T Ticketing API base URL | Yes (for ticket submission) |
 | `ABC_TOKEN` | AT&T Ticketing API bearer token | Yes (for ticket submission) |
+| `IRR_API_URL` | API proxy URL (use remote API instead of local bgpq4) | No |
 | `IRR_DB_PATH` | Override database path | No |
 | `IRR_LOG_LEVEL` | Override log level | No |
 | `IRR_LOG_FORMAT` | Override log format | No |
 
 ## Usage
 
-### Initialize Database
-
-```bash
-python -m app.cli init-db --config config.yaml
-```
-
 ### Fetch Prefixes
 
-Fetch current prefixes for an ASN and store a snapshot:
-
 ```bash
-python -m app.cli fetch --target AS15169 --config config.yaml
+# Fetch for a single ASN
+python -m app.cli fetch --target AS15169
 
-# With verbose output to see queries to each IRR source
-python -m app.cli fetch --target AS15169 --config config.yaml -v
+# Fetch for an AS-SET (expands all member ASNs)
+python -m app.cli fetch --target AS-GOOGLE
+
+# Verbose output
+python -m app.cli fetch --target AS15169 -v
+
+# JSON output
+python -m app.cli fetch --target AS15169 --json
 ```
 
 ### Compute Diff
 
-Compare current snapshot against previous (24 hours ago by default):
-
 ```bash
-# Human-readable output
-python -m app.cli diff --target AS15169 --config config.yaml
-
-# JSON output
-python -m app.cli diff --target AS15169 --config config.yaml --json
+python -m app.cli diff --target AS15169
+python -m app.cli diff --target AS15169 --json
 ```
 
 ### Submit Ticket
 
-Create a ticket for detected changes:
-
 ```bash
-# Dry run (no actual ticket created)
-python -m app.cli submit --target AS15169 --config config.yaml --dry-run
+# Dry run
+python -m app.cli submit --target AS15169 --dry-run
 
 # Actual submission
-python -m app.cli submit --target AS15169 --config config.yaml
+python -m app.cli submit --target AS15169
 ```
 
 ### All-in-One Run
 
-Fetch, diff, and submit ticket if changes detected:
-
 ```bash
 # Single target
-python -m app.cli run --target AS15169 --config config.yaml --dry-run
+python -m app.cli run --target AS15169 --dry-run
 
 # All configured targets
-python -m app.cli run-all --config config.yaml --dry-run
+python -m app.cli run-all --dry-run
 ```
 
 ### View History
 
-Show snapshot history for an ASN:
-
 ```bash
-python -m app.cli history --target AS15169 --config config.yaml --limit 10
+python -m app.cli history --target AS15169 --limit 10
 ```
 
 ### CLI Options
@@ -210,92 +185,87 @@ python -m app.cli history --target AS15169 --config config.yaml --limit 10
 # Run all tests
 pytest tests/ -v
 
-# Run with coverage report
+# Run with coverage
 pytest tests/ -v --cov=app --cov-report=term-missing
 
 # Run specific test file
-pytest tests/test_store.py -v
+pytest tests/test_bgpq4_client.py -v
 ```
 
 ## Daily Cron Job
 
-To run daily checks for all configured ASNs:
-
 ```bash
 # Add to crontab (runs at 6 AM daily)
-0 6 * * * cd /path/to/irr-automation && /path/to/.venv/bin/python -m app.cli run-all --config config.yaml
+0 6 * * * cd /path/to/AI-IRR && /path/to/.venv/bin/python -m app.cli run-all
 ```
 
 ## Project Structure
 
 ```
-irr-automation/
+AI-IRR/
 ├── app/
-│   ├── __init__.py        # Package initialization
-│   ├── config.py          # Configuration loading and validation
-│   ├── logger.py          # Structured logging
-│   ├── radb_client.py     # IRR client (REST + WHOIS)
-│   ├── store.py           # SQLite database layer with transactions
-│   ├── diff.py            # Diff computation
-│   ├── ticketing.py       # Ticketing API client
-│   └── cli.py             # CLI entry point
-├── tests/
 │   ├── __init__.py
-│   ├── test_cli.py        # CLI tests
-│   ├── test_store.py      # Database tests
-│   ├── test_radb_client.py # IRR client tests (including WHOIS)
-│   ├── test_diff.py       # Diff computation tests
-│   └── test_ticketing.py  # Ticketing API tests
-├── data/                   # Database files (created at runtime)
-├── logs/                   # Log files (created at runtime)
-├── config.yaml             # Configuration file
-├── requirements.txt        # Python dependencies
-├── pyproject.toml          # Project metadata
-└── README.md               # This file
+│   ├── bgpq4_client.py     # BGPQ4 IRR client (subprocess)
+│   ├── api_proxy_client.py  # Optional API proxy client
+│   ├── config.py            # Configuration loading and validation
+│   ├── cli.py               # CLI entry point
+│   ├── store.py             # SQLite database layer
+│   ├── diff.py              # Diff computation
+│   ├── ticketing.py         # Ticketing API client
+│   └── logger.py            # Structured logging
+├── api/
+│   ├── main.py              # FastAPI application
+│   ├── schemas.py           # Pydantic models
+│   ├── settings.py          # API settings
+│   └── dependencies.py      # Dependency injection
+├── tests/
+│   ├── test_bgpq4_client.py
+│   ├── test_cli.py
+│   ├── test_config.py
+│   ├── test_store.py
+│   ├── test_diff.py
+│   └── test_ticketing.py
+├── data/                     # Database files (runtime)
+├── config.yaml               # Configuration
+├── requirements.txt
+├── pyproject.toml
+└── README.md
 ```
+
+## How It Works
+
+1. **BGPQ4** queries RADB (which mirrors all 5 RIRs: RIPE, ARIN, APNIC, LACNIC, AFRINIC) for prefixes
+2. Prefixes are **aggregated** automatically (e.g., five /24s → one /22)
+3. For AS-SETs, BGPQ4 **recursively expands** all member ASNs
+4. Results are stored as a **snapshot** in SQLite
+5. **Diff** is computed against the previous snapshot
+6. If changes are detected, a **ticket** is created via the AT&T API
 
 ## Troubleshooting
 
-### "Configuration file not found"
+### "bgpq4 not found" / "Command not found: wsl"
 
-Ensure `config.yaml` exists in the specified path or use the `--config` option to specify the correct path.
+Ensure WSL is installed and bgpq4 is available:
+```bash
+wsl bgpq4 --version
+```
+If not installed: `wsl sudo apt install bgpq4`
 
-### "Configuration validation failed"
+### "bgpq4 timed out"
 
-Check that:
-1. All IRR sources in `irr_sources` are valid (RIPE, RADB, ARIN, APNIC, LACNIC, AFRINIC, NTTCOM)
-2. Numeric fields (timeout, retries) are positive
-3. Logging level and format are valid
+Increase `timeout_seconds` in the `bgpq4:` config section. Large AS-SETs may take longer to expand.
 
 ### "No snapshot found for target"
 
-Run the `fetch` command first to create an initial snapshot before running `diff` or `submit`.
-
-### "Failed to fetch prefixes"
-
-Check your internet connection. For WHOIS-based sources, ensure port 43 outbound is not blocked. The tool will retry automatically on transient failures. Use `-v` flag to see detailed error messages.
-
-### "WHOIS query timed out"
-
-Some IRR servers may be slow or temporarily unavailable. Try increasing `timeout_seconds` in the config or removing the problematic source from `irr_sources`.
+Run `fetch` first to create an initial snapshot before running `diff` or `submit`.
 
 ### "Ticket creation failed"
 
-Verify that:
-1. `ABC_BASE_URL` and `ABC_TOKEN` environment variables are set
-2. The API token is valid and not expired
-3. The ticketing service is accessible
+Verify that `ABC_BASE_URL` and `ABC_TOKEN` environment variables are set and the API token is valid.
 
 ### Database Locked
 
-If you see "database is locked" errors, ensure only one instance of the tool is running at a time.
-
-## Architecture Notes
-
-- **RIPE REST API**: Used for RIPE source queries. Fast and reliable.
-- **WHOIS Protocol**: Used for all other sources (RADB, ARIN, APNIC, etc.). Connects to port 43 of each IRR's WHOIS server.
-- **Prefix Merging**: Results from all sources are combined using set union, so duplicates are automatically removed.
-- **Transaction Support**: Database operations can be wrapped in transactions for atomicity.
+Ensure only one instance of the tool is running at a time.
 
 ## License
 
