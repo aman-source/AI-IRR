@@ -2,36 +2,44 @@
 
 import argparse
 import json
+import re
 import sys
 import time
 from datetime import datetime, timezone
 from typing import Optional
 
-from app.config import load_config, Config, LoggingConfig
+from app.config import load_config, Config
 from app.logger import setup_logging, get_logger
 from app.store import SnapshotStore
-from app.radb_client import RADBClient
+from app.bgpq4_client import BGPQ4Client
 from app.api_proxy_client import APIProxyClient
 from app.diff import compute_diff, format_diff_human, format_diff_json, DiffResult
 from app.ticketing import TicketingClient
+
+
+def detect_target_type(target: str) -> str:
+    """Detect whether a target is an ASN or AS-SET."""
+    if re.match(r'^AS\d+$', target):
+        return 'asn'
+    return 'as-set'
 
 
 def create_irr_client(config: Config):
     """Create the appropriate IRR client based on configuration.
 
     Returns APIProxyClient when api_url is set (proxy mode),
-    otherwise returns RADBClient (direct mode).
+    otherwise returns BGPQ4Client (direct mode via WSL).
     """
     if config.api_url:
         return APIProxyClient(
             api_url=config.api_url,
-            timeout=config.radb.timeout_seconds,
-            max_retries=config.radb.max_retries,
+            timeout=config.bgpq4.timeout_seconds,
         )
-    return RADBClient(
-        base_url=config.radb.base_url,
-        timeout=config.radb.timeout_seconds,
-        max_retries=config.radb.max_retries,
+    return BGPQ4Client(
+        bgpq4_cmd=config.bgpq4.cmd,
+        timeout=config.bgpq4.timeout_seconds,
+        source=config.bgpq4.source,
+        aggregate=config.bgpq4.aggregate,
     )
 
 
@@ -94,7 +102,7 @@ def create_parser() -> argparse.ArgumentParser:
     fetch_parser.add_argument(
         '--target', '-t',
         required=True,
-        help='ASN to fetch (e.g., AS15169)'
+        help='ASN or AS-SET to fetch (e.g., AS15169, AS-GOOGLE)'
     )
 
     # diff command
@@ -105,7 +113,7 @@ def create_parser() -> argparse.ArgumentParser:
     diff_parser.add_argument(
         '--target', '-t',
         required=True,
-        help='ASN to diff (e.g., AS15169)'
+        help='ASN or AS-SET to diff (e.g., AS15169, AS-GOOGLE)'
     )
 
     # submit command
@@ -116,7 +124,7 @@ def create_parser() -> argparse.ArgumentParser:
     submit_parser.add_argument(
         '--target', '-t',
         required=True,
-        help='ASN to submit ticket for (e.g., AS15169)'
+        help='ASN or AS-SET to submit ticket for (e.g., AS15169, AS-GOOGLE)'
     )
     submit_parser.add_argument(
         '--dry-run',
@@ -132,7 +140,7 @@ def create_parser() -> argparse.ArgumentParser:
     run_parser.add_argument(
         '--target', '-t',
         required=True,
-        help='ASN to process (e.g., AS15169)'
+        help='ASN or AS-SET to process (e.g., AS15169, AS-GOOGLE)'
     )
     run_parser.add_argument(
         '--dry-run',
@@ -159,7 +167,7 @@ def create_parser() -> argparse.ArgumentParser:
     history_parser.add_argument(
         '--target', '-t',
         required=True,
-        help='ASN to show history for (e.g., AS15169)'
+        help='ASN or AS-SET to show history for (e.g., AS15169, AS-GOOGLE)'
     )
     history_parser.add_argument(
         '--limit', '-l',
@@ -203,7 +211,7 @@ def cmd_fetch(config: Config, args: argparse.Namespace) -> int:
     client = create_irr_client(config)
 
     try:
-        result = client.fetch_prefixes(target, config.irr_sources)
+        result = client.fetch_prefixes(target)
     finally:
         client.close()
 
@@ -218,7 +226,7 @@ def cmd_fetch(config: Config, args: argparse.Namespace) -> int:
     try:
         snapshot_id = store.save_snapshot(
             target=target,
-            target_type='asn',
+            target_type=detect_target_type(target),
             irr_sources=result.sources_queried,
             ipv4_prefixes=list(result.ipv4_prefixes),
             ipv6_prefixes=list(result.ipv6_prefixes),
@@ -347,7 +355,7 @@ def cmd_submit(config: Config, args: argparse.Namespace) -> int:
 
         # Get IRR sources from snapshot
         snapshot = store.get_snapshot_by_id(diff_record.new_snapshot_id)
-        irr_sources = snapshot.irr_sources if snapshot else config.irr_sources
+        irr_sources = snapshot.irr_sources if snapshot else [config.bgpq4.source]
 
         # Submit ticket
         client = TicketingClient(
@@ -425,7 +433,7 @@ def cmd_run(config: Config, args: argparse.Namespace) -> int:
     client = create_irr_client(config)
 
     try:
-        fetch_result = client.fetch_prefixes(target, config.irr_sources)
+        fetch_result = client.fetch_prefixes(target)
     finally:
         client.close()
 
@@ -454,7 +462,7 @@ def cmd_run(config: Config, args: argparse.Namespace) -> int:
         # Save new snapshot
         snapshot_id = store.save_snapshot(
             target=target,
-            target_type='asn',
+            target_type=detect_target_type(target),
             irr_sources=fetch_result.sources_queried,
             ipv4_prefixes=list(fetch_result.ipv4_prefixes),
             ipv6_prefixes=list(fetch_result.ipv6_prefixes),

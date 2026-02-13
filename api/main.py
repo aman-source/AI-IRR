@@ -4,13 +4,12 @@ import asyncio
 import logging
 import time
 from contextlib import asynccontextmanager
-from typing import Optional
 
-from fastapi import Depends, FastAPI, HTTPException, Query
+from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.radb_client import RADBClient
-from api.dependencies import get_radb_client
+from app.bgpq4_client import BGPQ4Client
+from api.dependencies import get_bgpq4_client
 from api.schemas import (
     ErrorResponse,
     FetchRequest,
@@ -38,19 +37,20 @@ def _setup_logging() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Application lifespan — create / destroy the shared RADBClient
+# Application lifespan — create / destroy the shared BGPQ4Client
 # ---------------------------------------------------------------------------
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     _setup_logging()
-    app.state.radb_client = RADBClient(
-        base_url=settings.radb_base_url,
-        timeout=settings.timeout,
-        max_retries=settings.max_retries,
+    app.state.bgpq4_client = BGPQ4Client(
+        bgpq4_cmd=settings.bgpq4_cmd_list,
+        timeout=settings.bgpq4_timeout,
+        source=settings.bgpq4_source,
+        aggregate=settings.bgpq4_aggregate,
     )
-    logging.getLogger("app").info("IRR Prefix Lookup API started")
+    logging.getLogger("app").info("IRR Prefix Lookup API started (BGPQ4)")
     yield
-    app.state.radb_client.close()
+    app.state.bgpq4_client.close()
     logging.getLogger("app").info("IRR Prefix Lookup API stopped")
 
 
@@ -59,10 +59,10 @@ async def lifespan(app: FastAPI):
 # ---------------------------------------------------------------------------
 app = FastAPI(
     title="IRR Prefix Lookup API",
-    version="1.0.0",
+    version="2.0.0",
     description=(
-        "REST API for querying Internet Routing Registry (IRR) databases. "
-        "Supports RIPE, RADB, ARIN, APNIC, LACNIC, AFRINIC, and NTTCOM."
+        "REST API for querying Internet Routing Registry (IRR) databases "
+        "via BGPQ4. Supports ASNs and AS-SETs with prefix aggregation."
     ),
     lifespan=lifespan,
 )
@@ -80,19 +80,18 @@ app.add_middleware(
 # ---------------------------------------------------------------------------
 async def _do_fetch(
     target: str,
-    irr_sources: list[str],
-    client: RADBClient,
+    client: BGPQ4Client,
 ) -> PrefixResponse:
     start = time.perf_counter()
-    result = await asyncio.to_thread(client.fetch_prefixes, target, irr_sources)
+    result = await asyncio.to_thread(client.fetch_prefixes, target)
     elapsed_ms = int((time.perf_counter() - start) * 1000)
 
     if not result.ipv4_prefixes and not result.ipv6_prefixes and result.errors:
         raise HTTPException(
             status_code=502,
             detail={
-                "error": "All IRR sources failed",
-                "detail": "No prefixes could be retrieved from any source",
+                "error": "BGPQ4 query failed",
+                "detail": "No prefixes could be retrieved",
                 "errors": result.errors,
             },
         )
@@ -116,8 +115,8 @@ async def _do_fetch(
 async def health():
     return HealthResponse(
         status="healthy",
-        version="1.0.0",
-        irr_sources_available=settings.default_sources_list,
+        version="2.0.0",
+        source=settings.bgpq4_source,
     )
 
 
@@ -129,35 +128,22 @@ async def health():
 )
 async def fetch_prefixes(
     body: FetchRequest,
-    client: RADBClient = Depends(get_radb_client),
+    client: BGPQ4Client = Depends(get_bgpq4_client),
 ):
-    """Fetch IPv4/IPv6 prefixes for a target ASN from selected IRR sources."""
-    sources = body.irr_sources or settings.default_sources_list
-    return await _do_fetch(body.target, sources, client)
+    """Fetch IPv4/IPv6 prefixes for a target ASN or AS-SET."""
+    return await _do_fetch(body.target, client)
 
 
 @app.get(
-    "/api/v1/prefixes/{asn}",
+    "/api/v1/prefixes/{target}",
     response_model=PrefixResponse,
     responses={502: {"model": ErrorResponse}},
     tags=["Prefixes"],
 )
 async def get_prefixes(
-    asn: str,
-    sources: Optional[str] = Query(
-        default=None,
-        description="Comma-separated IRR sources (e.g. RIPE,RADB)",
-    ),
-    client: RADBClient = Depends(get_radb_client),
+    target: str,
+    client: BGPQ4Client = Depends(get_bgpq4_client),
 ):
     """Convenience GET endpoint for quick prefix lookups."""
-    # Validate & normalize ASN
-    req = FetchRequest(target=asn, irr_sources=None)
-
-    # Parse sources query param
-    if sources:
-        req.irr_sources = [s.strip() for s in sources.split(",") if s.strip()]
-        req = FetchRequest(target=req.target, irr_sources=req.irr_sources)
-
-    source_list = req.irr_sources or settings.default_sources_list
-    return await _do_fetch(req.target, source_list, client)
+    req = FetchRequest(target=target)
+    return await _do_fetch(req.target, client)

@@ -1,56 +1,34 @@
 # IRR Prefix Change Detection & Ticket Automation Configuration
 # =============================================================
 
-# IRR sources to query (in order of preference)
-# The tool supports querying multiple Internet Routing Registries:
-#
-# Regional Internet Registries (RIRs):
-#   - RIPE    : Europe, Middle East, Central Asia (uses REST API)
-#   - ARIN    : North America (uses WHOIS)
-#   - APNIC   : Asia Pacific (uses WHOIS)
-#   - LACNIC  : Latin America & Caribbean (uses WHOIS)
-#   - AFRINIC : Africa (uses WHOIS)
-#
-# Other IRRs:
-#   - RADB    : Merit Network's Routing Assets Database (uses WHOIS)
-#   - NTTCOM  : NTT Communications (uses WHOIS)
-#
-# Results from all sources are merged and deduplicated.
-# RIPE is queried via REST API; all others use WHOIS protocol (port 43).
-irr_sources:
-  - RIPE      # Primary source - uses fast REST API
-  - RADB      # Global - widely used by networks worldwide
-  - ARIN      # North America
-  - APNIC     # Asia Pacific
-  - LACNIC    # Latin America
-  - AFRINIC   # Africa
-  - NTTCOM    # NTT Communications
+# BGPQ4 settings
+# BGPQ4 queries IRR databases via a single command. RADB mirrors all 5 RIRs
+# (RIPE, ARIN, APNIC, LACNIC, AFRINIC), so querying RADB alone is sufficient.
+# BGPQ4 handles AS-SET expansion and prefix aggregation automatically.
+bgpq4:
+  cmd: ["wsl", "bgpq4"]      # Command to invoke bgpq4 (via WSL on Windows)
+  source: "RADB"              # IRR source (-S flag). RADB mirrors all RIRs.
+  aggregate: true             # Aggregate prefixes (-A flag)
+  timeout_seconds: 120        # Subprocess timeout
 
 # API Proxy Mode (optional)
 # When set, the CLI will call this deployed API for all IRR queries
-# instead of connecting to WHOIS/RIPE servers directly.
-# Useful when your local machine cannot reach WHOIS port 43 (e.g. VPN).
+# instead of running bgpq4 locally.
+# Useful when bgpq4 is not available on the local machine.
 # Can also be set via IRR_API_URL environment variable.
 # api_url: "https://your-deployed-api.example.com"
 
-# List of ASNs to monitor
-# Add any ASNs you want to track for prefix changes
+# Targets to monitor
+# Supports ASNs (e.g., AS15169) and AS-SETs (e.g., AS-GOOGLE).
+# BGPQ4 expands AS-SETs automatically to fetch all member prefixes.
 targets:
   - AS15169    # Google
   - AS16509    # Amazon
   - AS8075     # Microsoft
 
-# IRR API settings
-# Base URL is used for RIPE REST API; WHOIS servers are hardcoded per source
-radb:
-  base_url: "https://rest.db.ripe.net"
-  timeout_seconds: 60       # Request timeout (applies to both REST and WHOIS)
-  max_retries: 3            # Number of retry attempts
-
 # Database settings
 database:
   # Path to SQLite database file
-  # Use relative or absolute path
   path: "./data/irr.sqlite"
 
 # AT&T Ticketing API settings

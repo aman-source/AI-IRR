@@ -10,11 +10,12 @@ import yaml
 
 
 @dataclass
-class RADBConfig:
-    """RADB API configuration."""
-    base_url: str = "https://api.radb.net"
-    timeout_seconds: int = 60
-    max_retries: int = 3
+class BGPQ4Config:
+    """BGPQ4 tool configuration."""
+    cmd: List[str] = field(default_factory=lambda: ["wsl", "bgpq4"])
+    timeout_seconds: int = 120
+    source: str = "RADB"
+    aggregate: bool = True
 
 
 @dataclass
@@ -49,10 +50,9 @@ class DiffConfig:
 @dataclass
 class Config:
     """Main configuration container."""
-    irr_sources: List[str] = field(default_factory=lambda: ["RADB", "RIPE", "NTTCOM"])
     targets: List[str] = field(default_factory=list)
     api_url: Optional[str] = None  # When set, proxy all IRR queries via this URL
-    radb: RADBConfig = field(default_factory=RADBConfig)
+    bgpq4: BGPQ4Config = field(default_factory=BGPQ4Config)
     database: DatabaseConfig = field(default_factory=DatabaseConfig)
     ticketing: TicketingConfig = field(default_factory=TicketingConfig)
     logging: LoggingConfig = field(default_factory=LoggingConfig)
@@ -110,10 +110,6 @@ def load_config(config_path: str) -> Config:
     # Build config object
     config = Config()
 
-    # IRR sources
-    if 'irr_sources' in raw_config:
-        config.irr_sources = raw_config['irr_sources']
-
     # Targets
     if 'targets' in raw_config:
         config.targets = raw_config['targets']
@@ -124,13 +120,14 @@ def load_config(config_path: str) -> Config:
     if os.environ.get('IRR_API_URL'):
         config.api_url = os.environ['IRR_API_URL']
 
-    # RADB config
-    if 'radb' in raw_config:
-        radb_raw = raw_config['radb']
-        config.radb = RADBConfig(
-            base_url=radb_raw.get('base_url', config.radb.base_url),
-            timeout_seconds=radb_raw.get('timeout_seconds', config.radb.timeout_seconds),
-            max_retries=radb_raw.get('max_retries', config.radb.max_retries),
+    # BGPQ4 config
+    if 'bgpq4' in raw_config:
+        bgpq4_raw = raw_config['bgpq4']
+        config.bgpq4 = BGPQ4Config(
+            cmd=bgpq4_raw.get('cmd', config.bgpq4.cmd),
+            timeout_seconds=bgpq4_raw.get('timeout_seconds', config.bgpq4.timeout_seconds),
+            source=bgpq4_raw.get('source', config.bgpq4.source),
+            aggregate=bgpq4_raw.get('aggregate', config.bgpq4.aggregate),
         )
 
     # Database config
@@ -188,8 +185,8 @@ def load_config(config_path: str) -> Config:
     return config
 
 
-# Valid IRR sources that we know how to query
-VALID_IRR_SOURCES = {'RIPE', 'RADB', 'ARIN', 'APNIC', 'LACNIC', 'AFRINIC', 'NTTCOM'}
+# Valid IRR sources for bgpq4 -S flag
+VALID_BGPQ4_SOURCES = {'RIPE', 'RADB', 'ARIN', 'APNIC', 'LACNIC', 'AFRINIC'}
 
 
 class ConfigValidationError(ValueError):
@@ -209,20 +206,22 @@ def validate_config(config: Config) -> None:
     """
     errors = []
 
-    # Validate IRR sources are recognized
-    if config.irr_sources:
-        unknown_sources = set(s.upper() for s in config.irr_sources) - VALID_IRR_SOURCES
-        if unknown_sources:
-            errors.append(f"Unknown IRR sources: {unknown_sources}. Valid sources: {VALID_IRR_SOURCES}")
-    else:
-        errors.append("At least one IRR source must be configured")
+    # Validate BGPQ4 source
+    if config.bgpq4.source.upper() not in VALID_BGPQ4_SOURCES:
+        errors.append(
+            f"Unknown BGPQ4 source: {config.bgpq4.source}. "
+            f"Valid sources: {sorted(VALID_BGPQ4_SOURCES)}"
+        )
 
-    # Validate numeric fields are positive
-    if config.radb.timeout_seconds <= 0:
-        errors.append("radb.timeout_seconds must be positive")
-    if config.radb.max_retries < 0:
-        errors.append("radb.max_retries must be non-negative")
+    # Validate BGPQ4 timeout
+    if config.bgpq4.timeout_seconds <= 0:
+        errors.append("bgpq4.timeout_seconds must be positive")
 
+    # Validate BGPQ4 command
+    if not config.bgpq4.cmd:
+        errors.append("bgpq4.cmd must not be empty")
+
+    # Validate ticketing numeric fields
     if config.ticketing.timeout_seconds <= 0:
         errors.append("ticketing.timeout_seconds must be positive")
     if config.ticketing.max_retries < 0:

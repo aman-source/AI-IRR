@@ -3,22 +3,19 @@
 from pydantic_settings import BaseSettings
 
 
-VALID_IRR_SOURCES = {"RIPE", "RADB", "ARIN", "APNIC", "LACNIC", "AFRINIC", "NTTCOM"}
-
-
 class Settings(BaseSettings):
-    timeout: int = 60
-    max_retries: int = 3
-    default_sources: str = "RIPE,RADB,ARIN,APNIC,LACNIC,AFRINIC,NTTCOM"
-    radb_base_url: str = "https://rest.db.ripe.net"
+    bgpq4_cmd: str = "wsl,bgpq4"         # Comma-separated command parts
+    bgpq4_source: str = "RADB"
+    bgpq4_timeout: int = 120
+    bgpq4_aggregate: bool = True
     log_level: str = "INFO"
     cors_origins: str = "*"
 
     model_config = {"env_prefix": "IRR_API_"}
 
     @property
-    def default_sources_list(self) -> list[str]:
-        return [s.strip().upper() for s in self.default_sources.split(",")]
+    def bgpq4_cmd_list(self) -> list[str]:
+        return [s.strip() for s in self.bgpq4_cmd.split(",")]
 
 
 settings = Settings()

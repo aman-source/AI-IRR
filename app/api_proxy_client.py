@@ -1,6 +1,6 @@
-"""Proxy client that calls the deployed IRR Prefix Lookup API instead of querying WHOIS/RIPE directly.
+"""Proxy client that calls the deployed IRR Prefix Lookup API instead of running bgpq4 locally.
 
-Use this when your local machine cannot reach WHOIS servers (e.g. VPN restrictions).
+Use this when bgpq4 is not available on the local machine.
 Set `api_url` in config.yaml to enable:
 
     api_url: "https://your-deployed-api.azurecontainerapps.io"
@@ -17,7 +17,7 @@ from tenacity import (
     before_sleep_log,
 )
 
-from app.radb_client import PrefixResult, RADBClientError, RADBAPIError
+from app.bgpq4_client import PrefixResult, BGPQ4ClientError
 
 logger = logging.getLogger("app.api_proxy_client")
 
@@ -28,7 +28,7 @@ class APIProxyClient:
     def __init__(
         self,
         api_url: str,
-        timeout: int = 60,
+        timeout: int = 120,
         max_retries: int = 3,
     ):
         self.api_url = api_url.rstrip("/")
@@ -37,62 +37,62 @@ class APIProxyClient:
         self._session = requests.Session()
         self._session.headers.update({
             "Content-Type": "application/json",
-            "User-Agent": "irr-automation/1.0 (proxy)",
+            "User-Agent": "irr-automation/2.0 (proxy)",
         })
 
-    def fetch_prefixes(self, target: str, irr_sources: list[str]) -> PrefixResult:
+    def fetch_prefixes(self, target: str) -> PrefixResult:
         """Fetch prefixes by calling the deployed cloud API.
 
-        Same interface as RADBClient.fetch_prefixes().
+        Same interface as BGPQ4Client.fetch_prefixes().
         """
-        return self._fetch_with_retry(target, irr_sources)
+        return self._fetch_with_retry(target)
 
-    def _fetch_with_retry(self, target: str, irr_sources: list[str]) -> PrefixResult:
+    def _fetch_with_retry(self, target: str) -> PrefixResult:
         @retry(
             stop=stop_after_attempt(self.max_retries),
             wait=wait_exponential(multiplier=1, min=2, max=30),
-            retry=retry_if_exception_type((requests.RequestException, RADBAPIError)),
+            retry=retry_if_exception_type((requests.RequestException, BGPQ4ClientError)),
             before_sleep=before_sleep_log(logger, logging.WARNING),
             reraise=True,
         )
         def _do_fetch():
-            return self._execute_fetch(target, irr_sources)
+            return self._execute_fetch(target)
 
         try:
             return _do_fetch()
         except requests.RequestException as e:
-            raise RADBAPIError(
+            raise BGPQ4ClientError(
                 f"API proxy request failed after {self.max_retries} attempts: {e}"
             )
 
-    def _execute_fetch(self, target: str, irr_sources: list[str]) -> PrefixResult:
+    def _execute_fetch(self, target: str) -> PrefixResult:
         url = f"{self.api_url}/api/v1/fetch"
 
         logger.info(
             f"Calling API proxy: {url}",
-            extra={"context": {"target": target, "sources": irr_sources}},
+            extra={"context": {"target": target}},
         )
 
         response = self._session.post(
             url,
-            json={"target": target, "irr_sources": irr_sources},
+            json={"target": target},
             timeout=self.timeout,
         )
 
         if response.status_code == 422:
             data = response.json()
             detail = data.get("detail", "Validation error")
-            raise RADBClientError(f"API validation error: {detail}")
+            raise BGPQ4ClientError(f"API validation error: {detail}")
 
         if response.status_code == 502:
             data = response.json()
             detail = data.get("detail", {})
-            raise RADBAPIError(
-                f"All IRR sources failed via API: {detail.get('errors', [])}"
+            raise BGPQ4ClientError(
+                f"BGPQ4 query failed via API: {detail.get('errors', [])}"
             )
 
         if response.status_code != 200:
-            raise RADBAPIError(
+            raise BGPQ4ClientError(
                 f"API returned status {response.status_code}: {response.text[:200]}"
             )
 

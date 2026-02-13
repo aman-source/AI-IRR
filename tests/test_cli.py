@@ -19,11 +19,12 @@ from app.cli import (
     main,
     get_timestamp_str,
     print_output,
+    detect_target_type,
 )
-from app.config import Config, RADBConfig, DatabaseConfig, TicketingConfig, LoggingConfig, DiffConfig
+from app.config import Config, BGPQ4Config, DatabaseConfig, TicketingConfig, LoggingConfig, DiffConfig
 from app.store import Snapshot, Diff, Ticket
 from app.diff import DiffResult
-from app.radb_client import PrefixResult
+from app.bgpq4_client import PrefixResult
 from app.ticketing import TicketResponse
 
 
@@ -31,9 +32,8 @@ from app.ticketing import TicketResponse
 def mock_config():
     """Create a mock config for testing."""
     return Config(
-        irr_sources=['RIPE', 'RADB'],
         targets=['AS15169', 'AS16509'],
-        radb=RADBConfig(base_url='https://rest.db.ripe.net', timeout_seconds=60, max_retries=3),
+        bgpq4=BGPQ4Config(cmd=['wsl', 'bgpq4'], timeout_seconds=120, source='RADB'),
         database=DatabaseConfig(path=':memory:'),
         ticketing=TicketingConfig(base_url='https://api.example.com', api_token='test-token'),
         logging=LoggingConfig(level='INFO', format='text'),
@@ -63,7 +63,7 @@ def mock_snapshot():
         target='AS15169',
         target_type='asn',
         timestamp=1700000000,
-        irr_sources=['RIPE'],
+        irr_sources=['RADB'],
         ipv4_prefixes=['8.8.8.0/24', '8.8.4.0/24'],
         ipv6_prefixes=['2001:4860::/32'],
         content_hash='abc123',
@@ -89,6 +89,19 @@ def mock_diff_record():
     )
 
 
+class TestDetectTargetType:
+    """Tests for detect_target_type helper."""
+
+    def test_asn(self):
+        assert detect_target_type('AS15169') == 'asn'
+        assert detect_target_type('AS1') == 'asn'
+
+    def test_as_set(self):
+        assert detect_target_type('AS-GOOGLE') == 'as-set'
+        assert detect_target_type('AS15169:AS-CUSTOMERS') == 'as-set'
+        assert detect_target_type('AS-SET-NAME') == 'as-set'
+
+
 class TestCreateParser:
     """Tests for argument parser creation."""
 
@@ -101,7 +114,6 @@ class TestCreateParser:
     def test_parser_has_all_subcommands(self):
         """Test that all subcommands are available."""
         parser = create_parser()
-        # Parse with each subcommand to verify they exist
         subcommands = ['init-db', 'fetch', 'diff', 'submit', 'run', 'run-all', 'history']
 
         for cmd in subcommands:
@@ -169,15 +181,14 @@ class TestCmdFetch:
     """Tests for fetch command."""
 
     @patch('app.cli.SnapshotStore')
-    @patch('app.cli.RADBClient')
+    @patch('app.cli.BGPQ4Client')
     def test_fetch_success(self, mock_client_class, mock_store_class, mock_config, mock_args, mock_snapshot):
         """Test successful prefix fetch."""
-        # Setup mocks
         mock_client = Mock()
         mock_client.fetch_prefixes.return_value = PrefixResult(
             ipv4_prefixes={'8.8.8.0/24', '8.8.4.0/24'},
             ipv6_prefixes={'2001:4860::/32'},
-            sources_queried=['RIPE'],
+            sources_queried=['RADB'],
             errors=[],
         )
         mock_client_class.return_value = mock_client
@@ -190,21 +201,21 @@ class TestCmdFetch:
         result = cmd_fetch(mock_config, mock_args)
 
         assert result == 0
-        mock_client.fetch_prefixes.assert_called_once()
+        mock_client.fetch_prefixes.assert_called_once_with('AS15169')
         mock_store.save_snapshot.assert_called_once()
         mock_client.close.assert_called_once()
         mock_store.close.assert_called_once()
 
     @patch('app.cli.SnapshotStore')
-    @patch('app.cli.RADBClient')
+    @patch('app.cli.BGPQ4Client')
     def test_fetch_all_errors_returns_1(self, mock_client_class, mock_store_class, mock_config, mock_args):
-        """Test that fetch returns 1 when all sources fail."""
+        """Test that fetch returns 1 when query fails."""
         mock_client = Mock()
         mock_client.fetch_prefixes.return_value = PrefixResult(
             ipv4_prefixes=set(),
             ipv6_prefixes=set(),
             sources_queried=[],
-            errors=['Failed to query RIPE'],
+            errors=['bgpq4 timed out'],
         )
         mock_client_class.return_value = mock_client
 
@@ -214,14 +225,14 @@ class TestCmdFetch:
         mock_client.close.assert_called_once()
 
     @patch('app.cli.SnapshotStore')
-    @patch('app.cli.RADBClient')
+    @patch('app.cli.BGPQ4Client')
     def test_fetch_json_output(self, mock_client_class, mock_store_class, mock_config, mock_args, mock_snapshot, capsys):
         """Test fetch with JSON output."""
         mock_client = Mock()
         mock_client.fetch_prefixes.return_value = PrefixResult(
             ipv4_prefixes={'8.8.8.0/24'},
             ipv6_prefixes=set(),
-            sources_queried=['RIPE'],
+            sources_queried=['RADB'],
             errors=[],
         )
         mock_client_class.return_value = mock_client
@@ -345,20 +356,18 @@ class TestCmdRun:
 
     @patch('app.cli.TicketingClient')
     @patch('app.cli.SnapshotStore')
-    @patch('app.cli.RADBClient')
-    def test_run_success_no_changes(self, mock_radb_class, mock_store_class, mock_ticket_class, mock_config, mock_args, mock_snapshot):
+    @patch('app.cli.BGPQ4Client')
+    def test_run_success_no_changes(self, mock_bgpq4_class, mock_store_class, mock_ticket_class, mock_config, mock_args, mock_snapshot):
         """Test run command when no changes detected."""
-        # Setup RADB client mock
-        mock_radb = Mock()
-        mock_radb.fetch_prefixes.return_value = PrefixResult(
+        mock_bgpq4 = Mock()
+        mock_bgpq4.fetch_prefixes.return_value = PrefixResult(
             ipv4_prefixes={'8.8.8.0/24'},
             ipv6_prefixes=set(),
-            sources_queried=['RIPE'],
+            sources_queried=['RADB'],
             errors=[],
         )
-        mock_radb_class.return_value = mock_radb
+        mock_bgpq4_class.return_value = mock_bgpq4
 
-        # Setup store mock - no previous snapshot means first run
         mock_store = Mock()
         mock_store.get_snapshot_before.return_value = None
         mock_store.save_snapshot.return_value = 1
@@ -369,27 +378,28 @@ class TestCmdRun:
         result = cmd_run(mock_config, mock_args)
 
         assert result == 0
-        mock_radb.close.assert_called_once()
+        mock_bgpq4.fetch_prefixes.assert_called_once_with('AS15169')
+        mock_bgpq4.close.assert_called_once()
         mock_store.close.assert_called_once()
 
     @patch('app.cli.TicketingClient')
     @patch('app.cli.SnapshotStore')
-    @patch('app.cli.RADBClient')
-    def test_run_fetch_failure(self, mock_radb_class, mock_store_class, mock_ticket_class, mock_config, mock_args):
+    @patch('app.cli.BGPQ4Client')
+    def test_run_fetch_failure(self, mock_bgpq4_class, mock_store_class, mock_ticket_class, mock_config, mock_args):
         """Test run command when fetch fails."""
-        mock_radb = Mock()
-        mock_radb.fetch_prefixes.return_value = PrefixResult(
+        mock_bgpq4 = Mock()
+        mock_bgpq4.fetch_prefixes.return_value = PrefixResult(
             ipv4_prefixes=set(),
             ipv6_prefixes=set(),
             sources_queried=[],
-            errors=['Connection error'],
+            errors=['bgpq4 timed out'],
         )
-        mock_radb_class.return_value = mock_radb
+        mock_bgpq4_class.return_value = mock_bgpq4
 
         result = cmd_run(mock_config, mock_args)
 
         assert result == 1
-        mock_radb.close.assert_called_once()
+        mock_bgpq4.close.assert_called_once()
 
 
 class TestCmdRunAll:
@@ -528,7 +538,6 @@ class TestUtilityFunctions:
         """Test timestamp string generation."""
         ts = get_timestamp_str()
         assert isinstance(ts, str)
-        # Should be in format YYYY-MM-DD HH:MM:SS
         assert len(ts) == 19
 
     def test_print_output_quiet_mode(self, capsys):

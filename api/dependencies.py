@@ -1,10 +1,10 @@
-"""FastAPI dependency injection for RADBClient."""
+"""FastAPI dependency injection for BGPQ4Client."""
 
 from fastapi import Request
 
-from app.radb_client import RADBClient
+from app.bgpq4_client import BGPQ4Client
 
 
-def get_radb_client(request: Request) -> RADBClient:
-    """Retrieve the shared RADBClient instance from app state."""
-    return request.app.state.radb_client
+def get_bgpq4_client(request: Request) -> BGPQ4Client:
+    """Retrieve the shared BGPQ4Client instance from app state."""
+    return request.app.state.bgpq4_client

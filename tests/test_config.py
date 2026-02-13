@@ -7,7 +7,7 @@ from unittest.mock import patch
 
 from app.config import (
     Config,
-    RADBConfig,
+    BGPQ4Config,
     DatabaseConfig,
     TicketingConfig,
     LoggingConfig,
@@ -16,7 +16,7 @@ from app.config import (
     validate_config,
     get_default_config,
     ConfigValidationError,
-    VALID_IRR_SOURCES,
+    VALID_BGPQ4_SOURCES,
     _expand_env_vars,
     _expand_env_vars_recursive,
 )
@@ -29,15 +29,16 @@ class TestConfigDefaults:
         """Test that default config is created with expected values."""
         config = get_default_config()
         assert isinstance(config, Config)
-        assert 'RADB' in config.irr_sources
+        assert config.bgpq4.source == 'RADB'
         assert config.targets == []
 
-    def test_radb_config_defaults(self):
-        """Test RADBConfig default values."""
-        config = RADBConfig()
-        assert config.base_url == "https://api.radb.net"
-        assert config.timeout_seconds == 60
-        assert config.max_retries == 3
+    def test_bgpq4_config_defaults(self):
+        """Test BGPQ4Config default values."""
+        config = BGPQ4Config()
+        assert config.cmd == ["wsl", "bgpq4"]
+        assert config.timeout_seconds == 120
+        assert config.source == "RADB"
+        assert config.aggregate is True
 
     def test_database_config_defaults(self):
         """Test DatabaseConfig default values."""
@@ -118,21 +119,20 @@ class TestExpandEnvVars:
 class TestValidateConfig:
     """Tests for configuration validation."""
 
-    def test_valid_irr_sources(self):
-        """Test that all valid IRR sources are recognized."""
-        assert 'RIPE' in VALID_IRR_SOURCES
-        assert 'RADB' in VALID_IRR_SOURCES
-        assert 'ARIN' in VALID_IRR_SOURCES
-        assert 'APNIC' in VALID_IRR_SOURCES
-        assert 'LACNIC' in VALID_IRR_SOURCES
-        assert 'AFRINIC' in VALID_IRR_SOURCES
-        assert 'NTTCOM' in VALID_IRR_SOURCES
+    def test_valid_bgpq4_sources(self):
+        """Test that all valid BGPQ4 sources are recognized."""
+        assert 'RIPE' in VALID_BGPQ4_SOURCES
+        assert 'RADB' in VALID_BGPQ4_SOURCES
+        assert 'ARIN' in VALID_BGPQ4_SOURCES
+        assert 'APNIC' in VALID_BGPQ4_SOURCES
+        assert 'LACNIC' in VALID_BGPQ4_SOURCES
+        assert 'AFRINIC' in VALID_BGPQ4_SOURCES
+        assert 'NTTCOM' not in VALID_BGPQ4_SOURCES
 
     def test_validate_valid_config(self):
         """Test validation passes for valid config."""
         config = Config(
-            irr_sources=['RIPE', 'RADB'],
-            radb=RADBConfig(timeout_seconds=60, max_retries=3),
+            bgpq4=BGPQ4Config(source='RADB', timeout_seconds=120),
             ticketing=TicketingConfig(timeout_seconds=30, max_retries=3),
             logging=LoggingConfig(level='INFO', format='json'),
             diff=DiffConfig(lookback_hours=24),
@@ -140,25 +140,24 @@ class TestValidateConfig:
         # Should not raise
         validate_config(config)
 
-    def test_validate_unknown_irr_source(self):
-        """Test validation fails for unknown IRR source."""
-        config = Config(irr_sources=['RIPE', 'UNKNOWN'])
+    def test_validate_unknown_bgpq4_source(self):
+        """Test validation fails for unknown BGPQ4 source."""
+        config = Config(bgpq4=BGPQ4Config(source='UNKNOWN'))
         with pytest.raises(ConfigValidationError) as exc_info:
             validate_config(config)
-        assert "Unknown IRR sources" in str(exc_info.value)
+        assert "Unknown BGPQ4 source" in str(exc_info.value)
 
-    def test_validate_empty_irr_sources(self):
-        """Test validation fails for empty IRR sources."""
-        config = Config(irr_sources=[])
+    def test_validate_nttcom_source_rejected(self):
+        """Test that NTTCOM source is not valid."""
+        config = Config(bgpq4=BGPQ4Config(source='NTTCOM'))
         with pytest.raises(ConfigValidationError) as exc_info:
             validate_config(config)
-        assert "At least one IRR source" in str(exc_info.value)
+        assert "Unknown BGPQ4 source" in str(exc_info.value)
 
     def test_validate_negative_timeout(self):
         """Test validation fails for negative timeout."""
         config = Config(
-            irr_sources=['RIPE'],
-            radb=RADBConfig(timeout_seconds=-1),
+            bgpq4=BGPQ4Config(timeout_seconds=-1),
         )
         with pytest.raises(ConfigValidationError) as exc_info:
             validate_config(config)
@@ -167,27 +166,24 @@ class TestValidateConfig:
     def test_validate_zero_timeout(self):
         """Test validation fails for zero timeout."""
         config = Config(
-            irr_sources=['RIPE'],
-            radb=RADBConfig(timeout_seconds=0),
+            bgpq4=BGPQ4Config(timeout_seconds=0),
         )
         with pytest.raises(ConfigValidationError) as exc_info:
             validate_config(config)
         assert "timeout_seconds must be positive" in str(exc_info.value)
 
-    def test_validate_negative_retries(self):
-        """Test validation fails for negative retries."""
+    def test_validate_empty_cmd(self):
+        """Test validation fails for empty command."""
         config = Config(
-            irr_sources=['RIPE'],
-            radb=RADBConfig(max_retries=-1),
+            bgpq4=BGPQ4Config(cmd=[]),
         )
         with pytest.raises(ConfigValidationError) as exc_info:
             validate_config(config)
-        assert "max_retries must be non-negative" in str(exc_info.value)
+        assert "bgpq4.cmd must not be empty" in str(exc_info.value)
 
     def test_validate_invalid_log_level(self):
         """Test validation fails for invalid log level."""
         config = Config(
-            irr_sources=['RIPE'],
             logging=LoggingConfig(level='INVALID'),
         )
         with pytest.raises(ConfigValidationError) as exc_info:
@@ -197,7 +193,6 @@ class TestValidateConfig:
     def test_validate_invalid_log_format(self):
         """Test validation fails for invalid log format."""
         config = Config(
-            irr_sources=['RIPE'],
             logging=LoggingConfig(format='xml'),
         )
         with pytest.raises(ConfigValidationError) as exc_info:
@@ -207,15 +202,13 @@ class TestValidateConfig:
     def test_validate_multiple_errors(self):
         """Test validation reports multiple errors."""
         config = Config(
-            irr_sources=[],
-            radb=RADBConfig(timeout_seconds=0),
+            bgpq4=BGPQ4Config(source='UNKNOWN', timeout_seconds=0),
             logging=LoggingConfig(level='INVALID'),
         )
         with pytest.raises(ConfigValidationError) as exc_info:
             validate_config(config)
         error_msg = str(exc_info.value)
-        # Should contain multiple errors
-        assert "At least one IRR source" in error_msg
+        assert "Unknown BGPQ4 source" in error_msg
         assert "timeout_seconds must be positive" in error_msg
         assert "logging.level must be one of" in error_msg
 
@@ -231,12 +224,12 @@ class TestLoadConfig:
     def test_load_config_basic(self):
         """Test loading a basic config file."""
         config_content = """
-irr_sources:
-  - RIPE
 targets:
   - AS15169
-radb:
-  timeout_seconds: 30
+bgpq4:
+  source: RADB
+  timeout_seconds: 60
+  aggregate: true
 database:
   path: ./test.db
 logging:
@@ -250,9 +243,10 @@ diff:
             f.flush()
             config = load_config(f.name)
 
-        assert config.irr_sources == ['RIPE']
         assert config.targets == ['AS15169']
-        assert config.radb.timeout_seconds == 30
+        assert config.bgpq4.source == 'RADB'
+        assert config.bgpq4.timeout_seconds == 60
+        assert config.bgpq4.aggregate is True
         assert config.database.path == './test.db'
         assert config.logging.level == 'DEBUG'
         assert config.logging.format == 'text'
@@ -263,8 +257,6 @@ diff:
     def test_load_config_env_override(self):
         """Test that environment variables override config values."""
         config_content = """
-irr_sources:
-  - RIPE
 database:
   path: ./default.db
 """
@@ -280,8 +272,6 @@ database:
     def test_load_config_ticketing_env_vars(self):
         """Test ticketing config from environment variables."""
         config_content = """
-irr_sources:
-  - RIPE
 ticketing:
   base_url: "${ABC_BASE_URL}"
   api_token: "${ABC_TOKEN}"
@@ -307,24 +297,24 @@ ticketing:
             config = load_config(f.name)
 
         # Should have default values
-        assert 'RADB' in config.irr_sources
-        assert config.radb.timeout_seconds == 60
+        assert config.bgpq4.source == 'RADB'
+        assert config.bgpq4.timeout_seconds == 120
 
         os.unlink(f.name)
 
-    def test_load_config_validation_failure(self):
-        """Test that invalid config raises validation error."""
+    def test_load_config_bgpq4_custom_cmd(self):
+        """Test loading config with custom bgpq4 command."""
         config_content = """
-irr_sources:
-  - INVALID_SOURCE
+bgpq4:
+  cmd: ["/usr/local/bin/bgpq4"]
+  source: RIPE
 """
         with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False) as f:
-            temp_path = f.name
             f.write(config_content)
             f.flush()
+            config = load_config(f.name)
 
-        try:
-            with pytest.raises(ConfigValidationError):
-                load_config(temp_path)
-        finally:
-            os.unlink(temp_path)
+        assert config.bgpq4.cmd == ["/usr/local/bin/bgpq4"]
+        assert config.bgpq4.source == "RIPE"
+
+        os.unlink(f.name)
