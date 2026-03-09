@@ -6,7 +6,7 @@
 # (RIPE, ARIN, APNIC, LACNIC, AFRINIC), so querying RADB alone is sufficient.
 # BGPQ4 handles AS-SET expansion and prefix aggregation automatically.
 bgpq4:
-  cmd: ["wsl", "bgpq4"]      # Command to invoke bgpq4 (via WSL on Windows)
+  cmd: ["bgpq4"]      # Command to invoke bgpq4 (via WSL on Windows)
   source: "RADB"              # IRR source (-S flag). RADB mirrors all RIRs.
   aggregate: true             # Aggregate prefixes (-A flag)
   timeout_seconds: 120        # Subprocess timeout
@@ -53,3 +53,9 @@ diff:
   # Compare against snapshot from N hours ago
   # Default: 24 hours (daily comparison)
   lookback_hours: 24
+
+# Microsoft Teams alert settings (via Power Automate webhook)
+# Set TEAMS_WEBHOOK_URL environment variable, or paste the URL below.
+teams:
+  webhook_url: "${TEAMS_WEBHOOK_URL}"
+  timeout_seconds: 15

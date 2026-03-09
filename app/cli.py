@@ -15,6 +15,7 @@ from app.bgpq4_client import BGPQ4Client
 from app.api_proxy_client import APIProxyClient
 from app.diff import compute_diff, format_diff_human, format_diff_json, DiffResult
 from app.ticketing import TicketingClient
+from app.teams import TeamsNotifier
 
 
 def detect_target_type(target: str) -> str:
@@ -555,6 +556,19 @@ def cmd_run(config: Config, args: argparse.Namespace) -> int:
 
             finally:
                 ticket_client.close()
+
+            # Send Teams alert
+            if config.teams.webhook_url:
+                notifier = TeamsNotifier(
+                    webhook_url=config.teams.webhook_url,
+                    timeout=config.teams.timeout_seconds,
+                )
+                notifier.notify(
+                    target=target,
+                    diff=diff,
+                    ticket_id=ticket_response.ticket_id if ticket_response else None,
+                    dry_run=dry_run,
+                )
 
         # JSON output
         if args.json:

@@ -13,6 +13,7 @@ Uses [BGPQ4](https://github.com/bgp/bgpq4) for IRR queries, which handles AS-SET
 - **Snapshot Storage**: Persist prefix snapshots in SQLite for historical tracking
 - **Change Detection**: Compute diffs between snapshots to detect added/removed prefixes
 - **Ticket Automation**: Automatically create tickets when changes are detected
+- **Teams Alerts**: Post Adaptive Card notifications to Microsoft Teams via Power Automate webhook
 - **Idempotency**: Prevent duplicate tickets using diff hashing
 - **Dry-Run Mode**: Test the workflow without creating actual tickets
 - **Optional API**: FastAPI service for remote/shared access
@@ -105,6 +106,11 @@ logging:
 # Diff settings
 diff:
   lookback_hours: 24     # Compare against snapshot from N hours ago
+
+# Microsoft Teams alerts (via Power Automate webhook)
+teams:
+  webhook_url: "${TEAMS_WEBHOOK_URL}"   # Set env var or paste URL directly
+  timeout_seconds: 15
 ```
 
 ### Environment Variables
@@ -113,6 +119,7 @@ diff:
 |----------|-------------|----------|
 | `ABC_BASE_URL` | AT&T Ticketing API base URL | Yes (for ticket submission) |
 | `ABC_TOKEN` | AT&T Ticketing API bearer token | Yes (for ticket submission) |
+| `TEAMS_WEBHOOK_URL` | Power Automate webhook URL for Teams alerts | No |
 | `IRR_API_URL` | API proxy URL (use remote API instead of local bgpq4) | No |
 | `IRR_DB_PATH` | Override database path | No |
 | `IRR_LOG_LEVEL` | Override log level | No |
@@ -212,6 +219,7 @@ AI-IRR/
 │   ├── store.py             # SQLite database layer
 │   ├── diff.py              # Diff computation
 │   ├── ticketing.py         # Ticketing API client
+│   ├── teams.py             # Microsoft Teams Adaptive Card notifier
 │   └── logger.py            # Structured logging
 ├── api/
 │   ├── main.py              # FastAPI application
@@ -240,6 +248,7 @@ AI-IRR/
 4. Results are stored as a **snapshot** in SQLite
 5. **Diff** is computed against the previous snapshot
 6. If changes are detected, a **ticket** is created via the AT&T API
+7. A **Teams Adaptive Card** alert is posted via Power Automate webhook
 
 ## Troubleshooting
 
@@ -262,6 +271,13 @@ Run `fetch` first to create an initial snapshot before running `diff` or `submit
 ### "Ticket creation failed"
 
 Verify that `ABC_BASE_URL` and `ABC_TOKEN` environment variables are set and the API token is valid.
+
+### Teams alert not appearing
+
+1. Confirm `TEAMS_WEBHOOK_URL` is set to the Power Automate webhook URL.
+2. The webhook must use a **"When a HTTP request is received"** or **"Teams webhook"** trigger configured to accept the Adaptive Card format.
+3. The "Post card in a chat or channel" action inside the flow must reference `triggerBody()?['attachments'][0]['content']` as the card content.
+4. Test with a direct `curl` POST — a `202 Accepted` response means the webhook is reachable.
 
 ### Database Locked
 

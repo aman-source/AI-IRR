@@ -48,6 +48,13 @@ class DiffConfig:
 
 
 @dataclass
+class TeamsConfig:
+    """Microsoft Teams alert configuration via Power Automate webhook."""
+    webhook_url: str = ""
+    timeout_seconds: int = 15
+
+
+@dataclass
 class Config:
     """Main configuration container."""
     targets: List[str] = field(default_factory=list)
@@ -57,6 +64,7 @@ class Config:
     ticketing: TicketingConfig = field(default_factory=TicketingConfig)
     logging: LoggingConfig = field(default_factory=LoggingConfig)
     diff: DiffConfig = field(default_factory=DiffConfig)
+    teams: TeamsConfig = field(default_factory=TeamsConfig)
 
 
 def _expand_env_vars(value: str) -> str:
@@ -178,6 +186,18 @@ def load_config(config_path: str) -> Config:
         config.diff = DiffConfig(
             lookback_hours=diff_raw.get('lookback_hours', config.diff.lookback_hours),
         )
+
+    # Teams config
+    if 'teams' in raw_config:
+        teams_raw = raw_config['teams']
+        config.teams = TeamsConfig(
+            webhook_url=teams_raw.get('webhook_url', config.teams.webhook_url),
+            timeout_seconds=teams_raw.get('timeout_seconds', config.teams.timeout_seconds),
+        )
+
+    # Apply environment variable override for Teams webhook
+    if os.environ.get('TEAMS_WEBHOOK_URL'):
+        config.teams.webhook_url = os.environ['TEAMS_WEBHOOK_URL']
 
     # Validate configuration
     validate_config(config)
