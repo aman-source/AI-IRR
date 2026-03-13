@@ -13,9 +13,11 @@ class FetchRequest(BaseModel):
     @classmethod
     def validate_target(cls, v: str) -> str:
         v = v.strip().upper()
-        if not re.match(r"^AS[-\w:]+$", v):
+        # ASN: AS15169 (AS followed by digits)
+        # AS-SET: AS-GOOGLE or AS-GOOGLE:EXAMPLE (AS- followed by alphanumeric/hyphen/colon)
+        if not re.match(r"^AS(\d+|[-A-Z0-9:]+)$", v):
             raise ValueError(
-                "target must be a valid ASN (e.g. AS15169) or AS-SET (e.g. AS-GOOGLE)"
+                "target must be a valid ASN (e.g. AS15169) or AS-SET (e.g. AS-GOOGLE or AS-GOOGLE:EXAMPLE)"
             )
         return v
 

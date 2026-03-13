@@ -80,13 +80,21 @@ class APIProxyClient:
         )
 
         if response.status_code == 422:
-            data = response.json()
-            detail = data.get("detail", "Validation error")
+            try:
+                data = response.json()
+                detail = data.get("detail", "Validation error")
+            except (ValueError, requests.RequestException) as e:
+                logger.error(f"Failed to parse 422 response: {e}")
+                detail = "Validation error (unparseable response)"
             raise BGPQ4ClientError(f"API validation error: {detail}")
 
         if response.status_code == 502:
-            data = response.json()
-            detail = data.get("detail", {})
+            try:
+                data = response.json()
+                detail = data.get("detail", {})
+            except (ValueError, requests.RequestException) as e:
+                logger.error(f"Failed to parse 502 response: {e}")
+                raise BGPQ4ClientError(f"BGPQ4 query failed via API (unparseable error)")
             raise BGPQ4ClientError(
                 f"BGPQ4 query failed via API: {detail.get('errors', [])}"
             )

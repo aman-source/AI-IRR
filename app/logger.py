@@ -64,11 +64,7 @@ class ContextLogger(logging.LoggerAdapter):
         if self.extra:
             extra = {**self.extra, **extra}
 
-        # Extract context for structured logging
-        context = extra.pop('context', None)
-        if context:
-            extra['context'] = context
-
+        # Ensure context is preserved for structured logging
         kwargs['extra'] = extra
         return msg, kwargs
 

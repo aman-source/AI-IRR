@@ -56,7 +56,15 @@ class TicketingClient:
             api_token: Bearer token for authentication.
             timeout: Request timeout in seconds.
             max_retries: Maximum number of retry attempts.
+
+        Raises:
+            ValueError: If base_url or api_token are empty.
         """
+        if not base_url or not base_url.strip():
+            raise ValueError("base_url must not be empty")
+        if not api_token or not api_token.strip():
+            raise ValueError("api_token must not be empty")
+
         self.base_url = base_url.rstrip('/')
         self.api_token = api_token
         self.timeout = timeout
@@ -207,8 +215,15 @@ class TicketingClient:
                     status='duplicate',
                     is_duplicate=True,
                 )
-            except ValueError:
-                pass
+            except (ValueError, requests.RequestException) as e:
+                logger.error(
+                    f"Failed to parse 409 response: {e}",
+                    extra={'context': {
+                        'status_code': 409,
+                        'diff_hash': diff_hash,
+                    }}
+                )
+                raise TicketingAPIError(f"Invalid JSON in 409 response: {e}")
 
         # Handle success (201 Created)
         if response.status_code == 201:
@@ -226,8 +241,15 @@ class TicketingClient:
                     ticket_id=ticket_id,
                     status='created',
                 )
-            except ValueError:
-                pass
+            except (ValueError, requests.RequestException) as e:
+                logger.error(
+                    f"Failed to parse 201 response: {e}",
+                    extra={'context': {
+                        'status_code': 201,
+                        'diff_hash': diff_hash,
+                    }}
+                )
+                raise TicketingAPIError(f"Invalid JSON in 201 response: {e}")
 
         # Handle other status codes as errors
         error_msg = f"API returned status {response.status_code}: {response.text[:200]}"

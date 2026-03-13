@@ -159,11 +159,11 @@ def load_config(config_path: str) -> Config:
             max_retries=tick_raw.get('max_retries', config.ticketing.max_retries),
         )
 
-    # Apply environment variable overrides for ticketing
-    if os.environ.get('ABC_BASE_URL'):
-        config.ticketing.base_url = os.environ['ABC_BASE_URL']
-    if os.environ.get('ABC_TOKEN'):
-        config.ticketing.api_token = os.environ['ABC_TOKEN']
+    # Apply environment variable overrides for ticketing (only if not empty)
+    if os.environ.get('ABC_BASE_URL', '').strip():
+        config.ticketing.base_url = os.environ['ABC_BASE_URL'].strip()
+    if os.environ.get('ABC_TOKEN', '').strip():
+        config.ticketing.api_token = os.environ['ABC_TOKEN'].strip()
 
     # Logging config
     if 'logging' in raw_config:
@@ -195,9 +195,9 @@ def load_config(config_path: str) -> Config:
             timeout_seconds=teams_raw.get('timeout_seconds', config.teams.timeout_seconds),
         )
 
-    # Apply environment variable override for Teams webhook
-    if os.environ.get('TEAMS_WEBHOOK_URL'):
-        config.teams.webhook_url = os.environ['TEAMS_WEBHOOK_URL']
+    # Apply environment variable override for Teams webhook (only if not empty)
+    if os.environ.get('TEAMS_WEBHOOK_URL', '').strip():
+        config.teams.webhook_url = os.environ['TEAMS_WEBHOOK_URL'].strip()
 
     # Validate configuration
     validate_config(config)
@@ -259,6 +259,15 @@ def validate_config(config: Config) -> None:
     valid_formats = {'json', 'text'}
     if config.logging.format.lower() not in valid_formats:
         errors.append(f"logging.format must be one of: {valid_formats}")
+
+    # Validate Teams webhook URL if provided
+    if config.teams.webhook_url:
+        if not config.teams.webhook_url.startswith(('http://', 'https://')):
+            errors.append("teams.webhook_url must be a valid HTTP(S) URL")
+
+    # Validate Teams timeout
+    if config.teams.timeout_seconds <= 0:
+        errors.append("teams.timeout_seconds must be positive")
 
     if errors:
         raise ConfigValidationError(
