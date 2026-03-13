@@ -385,6 +385,49 @@ class TestCmdRun:
     @patch('app.cli.TicketingClient')
     @patch('app.cli.SnapshotStore')
     @patch('app.cli.BGPQ4Client')
+    def test_run_uses_recent_snapshot_when_no_lookback_snapshot(
+        self, mock_bgpq4_class, mock_store_class, mock_ticket_class, mock_config, mock_args, mock_snapshot
+    ):
+        """Fallback: when no snapshot older than lookback_hours exists, use the
+        most recent prior snapshot instead of treating everything as 'added'."""
+        mock_bgpq4 = Mock()
+        mock_bgpq4.fetch_prefixes.return_value = PrefixResult(
+            ipv4_prefixes={'8.8.8.0/24', '8.8.4.0/24'},
+            ipv6_prefixes=set(),
+            sources_queried=['RADB'],
+            errors=[],
+        )
+        mock_bgpq4_class.return_value = mock_bgpq4
+
+        recent_snapshot = Snapshot(
+            id=1,
+            target='AS15169',
+            target_type='asn',
+            timestamp=1700003600,  # 1 hour ago (inside 24h window)
+            irr_sources=['RADB'],
+            ipv4_prefixes=['8.8.8.0/24', '8.8.4.0/24'],
+            ipv6_prefixes=[],
+            content_hash='abc123',
+            created_at=1700003600,
+        )
+
+        mock_store = Mock()
+        # First call (lookback-based) returns None; second call (fallback) returns recent snapshot
+        mock_store.get_snapshot_before.side_effect = [None, recent_snapshot]
+        mock_store.save_snapshot.return_value = 2
+        mock_store.get_snapshot_by_id.return_value = mock_snapshot
+        mock_store.save_diff.return_value = 1
+        mock_store_class.return_value = mock_store
+
+        result = cmd_run(mock_config, mock_args)
+
+        assert result == 0
+        # Ensure the fallback call was made (called twice total)
+        assert mock_store.get_snapshot_before.call_count == 2
+
+    @patch('app.cli.TicketingClient')
+    @patch('app.cli.SnapshotStore')
+    @patch('app.cli.BGPQ4Client')
     def test_run_fetch_failure(self, mock_bgpq4_class, mock_store_class, mock_ticket_class, mock_config, mock_args):
         """Test run command when fetch fails."""
         mock_bgpq4 = Mock()

@@ -275,11 +275,14 @@ def cmd_diff(config: Config, args: argparse.Namespace) -> int:
             print_output(f"ERROR: No snapshot found for {target}", args.json, args.quiet)
             return 1
 
-        # Get previous snapshot (based on lookback window)
-        # Find the most recent snapshot that is older than (current - lookback)
+        # Get previous snapshot (based on lookback window).
+        # Prefer a snapshot older than the lookback window; fall back to the
+        # most recent prior snapshot when none that old exists yet.
         lookback_seconds = config.diff.lookback_hours * 3600
         cutoff_time = current.timestamp - lookback_seconds
         previous = store.get_snapshot_before(target, cutoff_time)
+        if previous is None:
+            previous = store.get_snapshot_before(target, current.timestamp)
 
         # Compute diff
         diff = compute_diff(current, previous)
@@ -453,12 +456,17 @@ def cmd_run(config: Config, args: argparse.Namespace) -> int:
     store.migrate()
 
     try:
-        # Get previous snapshot before saving new one
-        # Find the most recent snapshot that is older than (now - lookback)
+        # Get previous snapshot before saving new one.
+        # Prefer a snapshot older than the lookback window (e.g. 24 h ago) so
+        # we get a meaningful daily baseline; fall back to the most recent prior
+        # snapshot when no such old snapshot exists yet (e.g. first day of
+        # operation) to avoid treating every prefix as "newly added".
         lookback_seconds = config.diff.lookback_hours * 3600
         current_time = int(time.time())
         cutoff_time = current_time - lookback_seconds
         previous = store.get_snapshot_before(target, cutoff_time)
+        if previous is None:
+            previous = store.get_snapshot_before(target, current_time)
 
         # Save new snapshot
         snapshot_id = store.save_snapshot(
