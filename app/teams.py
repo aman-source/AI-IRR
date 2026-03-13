@@ -15,6 +15,21 @@ class TeamsNotifier:
     """Posts IRR prefix change alerts to Teams via a Power Automate webhook."""
 
     def __init__(self, webhook_url: str, timeout: int = 15):
+        """
+        Initialize the Teams notifier.
+
+        Args:
+            webhook_url: Power Automate webhook URL for Teams messages.
+            timeout: Request timeout in seconds.
+
+        Raises:
+            ValueError: If webhook_url is empty or invalid.
+        """
+        if not webhook_url or not webhook_url.strip():
+            raise ValueError("webhook_url must not be empty")
+        if not webhook_url.startswith("http"):
+            raise ValueError("webhook_url must be a valid HTTP(S) URL")
+
         self.webhook_url = webhook_url
         self.timeout = timeout
 
@@ -57,6 +72,24 @@ class TeamsNotifier:
                 extra={"context": {"target": target, "status_code": response.status_code}},
             )
             return True
+        except requests.Timeout as e:
+            logger.error(
+                f"Teams notification timed out for {target}: {e}",
+                extra={"context": {"target": target, "error": "timeout"}},
+            )
+            return False
+        except requests.ConnectionError as e:
+            logger.error(
+                f"Failed to connect to Teams webhook for {target}: {e}",
+                extra={"context": {"target": target, "error": "connection_error"}},
+            )
+            return False
+        except requests.HTTPError as e:
+            logger.error(
+                f"Teams webhook returned error for {target}: {e}",
+                extra={"context": {"target": target, "status_code": response.status_code}},
+            )
+            return False
         except requests.RequestException as e:
             logger.error(
                 f"Failed to send Teams alert for {target}: {e}",

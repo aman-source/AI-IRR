@@ -40,6 +40,38 @@ class TestTicketingClient:
         assert client.timeout == 45
         assert client.max_retries == 5
 
+    def test_init_empty_base_url(self):
+        """Test that empty base_url raises ValueError."""
+        with pytest.raises(ValueError, match="base_url must not be empty"):
+            TicketingClient(
+                base_url="",
+                api_token="test-token",
+            )
+
+    def test_init_whitespace_base_url(self):
+        """Test that whitespace-only base_url raises ValueError."""
+        with pytest.raises(ValueError, match="base_url must not be empty"):
+            TicketingClient(
+                base_url="   ",
+                api_token="test-token",
+            )
+
+    def test_init_empty_api_token(self):
+        """Test that empty api_token raises ValueError."""
+        with pytest.raises(ValueError, match="api_token must not be empty"):
+            TicketingClient(
+                base_url="https://api.example.com",
+                api_token="",
+            )
+
+    def test_init_whitespace_api_token(self):
+        """Test that whitespace-only api_token raises ValueError."""
+        with pytest.raises(ValueError, match="api_token must not be empty"):
+            TicketingClient(
+                base_url="https://api.example.com",
+                api_token="   ",
+            )
+
     def test_build_payload(self, diff_result):
         """Test payload building."""
         client = TicketingClient(

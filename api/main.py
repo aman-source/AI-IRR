@@ -86,6 +86,7 @@ async def _do_fetch(
     result = await asyncio.to_thread(client.fetch_prefixes, target)
     elapsed_ms = int((time.perf_counter() - start) * 1000)
 
+    # If no prefixes were retrieved at all and there are errors, fail with 502
     if not result.ipv4_prefixes and not result.ipv6_prefixes and result.errors:
         raise HTTPException(
             status_code=502,
@@ -96,6 +97,7 @@ async def _do_fetch(
             },
         )
 
+    # Return partial results with errors if at least one IP version succeeded
     return PrefixResponse(
         target=target,
         ipv4_prefixes=sorted(result.ipv4_prefixes),
