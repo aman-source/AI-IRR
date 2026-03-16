@@ -505,59 +505,62 @@ def cmd_run(config: Config, args: argparse.Namespace) -> int:
             if diff.removed_v6:
                 print(f"  - Removed IPv6: {len(diff.removed_v6)} prefixes")
 
-        # Step 4: Submit ticket if changes detected
+        # Step 4: Submit ticket if changes detected and ticketing is configured
         ticket_response = None
         if diff.has_changes:
-            ticket_client = TicketingClient(
-                base_url=config.ticketing.base_url,
-                api_token=config.ticketing.api_token,
-                timeout=config.ticketing.timeout_seconds,
-                max_retries=config.ticketing.max_retries,
-            )
-
-            try:
-                payload = ticket_client.get_payload(target, diff, fetch_result.sources_queried)
-
-                # Save pending ticket
-                ticket_id = store.save_ticket(
-                    diff_id=diff_id,
-                    target=target,
-                    status='pending',
-                    request_payload=payload,
+            if config.ticketing.base_url:
+                ticket_client = TicketingClient(
+                    base_url=config.ticketing.base_url,
+                    api_token=config.ticketing.api_token,
+                    timeout=config.ticketing.timeout_seconds,
+                    max_retries=config.ticketing.max_retries,
                 )
 
-                # Submit
-                ticket_response = ticket_client.create_ticket(
-                    target, diff, fetch_result.sources_queried, dry_run=dry_run
-                )
+                try:
+                    payload = ticket_client.get_payload(target, diff, fetch_result.sources_queried)
 
-                # Update ticket status
-                store.update_ticket_status(
-                    ticket_id=ticket_id,
-                    status=ticket_response.status,
-                    response_payload={
-                        'ticket_id': ticket_response.ticket_id,
-                        'error_message': ticket_response.error_message,
-                    },
-                    external_ticket_id=ticket_response.ticket_id,
-                )
-
-                if dry_run:
-                    print_output(f"[DRY-RUN] Would create ticket", args.json, args.quiet)
-                elif ticket_response.status == 'created':
-                    print_output(f"Ticket created: {ticket_response.ticket_id}", args.json, args.quiet)
-                elif ticket_response.status == 'duplicate':
-                    print_output(f"Ticket already exists: {ticket_response.ticket_id}", args.json, args.quiet)
-                else:
-                    print_output(
-                        f"ERROR: Failed to create ticket: {ticket_response.error_message}",
-                        args.json, args.quiet
+                    # Save pending ticket
+                    ticket_id = store.save_ticket(
+                        diff_id=diff_id,
+                        target=target,
+                        status='pending',
+                        request_payload=payload,
                     )
 
-            finally:
-                ticket_client.close()
+                    # Submit
+                    ticket_response = ticket_client.create_ticket(
+                        target, diff, fetch_result.sources_queried, dry_run=dry_run
+                    )
 
-            # Send Teams alert
+                    # Update ticket status
+                    store.update_ticket_status(
+                        ticket_id=ticket_id,
+                        status=ticket_response.status,
+                        response_payload={
+                            'ticket_id': ticket_response.ticket_id,
+                            'error_message': ticket_response.error_message,
+                        },
+                        external_ticket_id=ticket_response.ticket_id,
+                    )
+
+                    if dry_run:
+                        print_output(f"[DRY-RUN] Would create ticket", args.json, args.quiet)
+                    elif ticket_response.status == 'created':
+                        print_output(f"Ticket created: {ticket_response.ticket_id}", args.json, args.quiet)
+                    elif ticket_response.status == 'duplicate':
+                        print_output(f"Ticket already exists: {ticket_response.ticket_id}", args.json, args.quiet)
+                    else:
+                        print_output(
+                            f"ERROR: Failed to create ticket: {ticket_response.error_message}",
+                            args.json, args.quiet
+                        )
+
+                finally:
+                    ticket_client.close()
+            else:
+                print_output("Ticketing not configured — skipping ticket creation", args.json, args.quiet)
+
+            # Send Teams alert — fires on any change, independent of ticketing
             if config.teams.webhook_url:
                 notifier = TeamsNotifier(
                     webhook_url=config.teams.webhook_url,

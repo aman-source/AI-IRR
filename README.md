@@ -78,14 +78,14 @@ python -m app.cli run-all --dry-run
 # BGPQ4 settings
 bgpq4:
   cmd: ["wsl", "bgpq4"]      # Command to invoke bgpq4
-  sources:                    # IRR sources — bgpq4 queries all at once via -S RADB,RPKI,...
+  sources:                    # IRR sources — bgpq4 queries all at once via -S RADB,RIPE,...
     - RADB                    # Global IRR mirror (mirrors all 5 RIRs)
+    - RIPE                    # Europe, Middle East, Central Asia
+    - ARIN                    # North America
+    - APNIC                   # Asia-Pacific
+    - LACNIC                  # Latin America & Caribbean
+    - AFRINIC                 # Africa
     - RPKI                    # RPKI ROA validation
-    # - RIPE                  # Uncomment to query individual RIRs directly
-    # - ARIN
-    # - APNIC
-    # - LACNIC
-    # - AFRINIC
   aggregate: true             # Aggregate prefixes with bgpq4's -A flag
   timeout_seconds: 120        # Subprocess timeout
 
@@ -93,7 +93,7 @@ bgpq4:
 targets:
   - AS15169        # Google
   - AS16509        # Amazon
-  - AS-BYTEDANCE   # ByteDance
+  - AS8075         # Microsoft
 
 # Database settings
 database:
@@ -134,7 +134,7 @@ teams:
 | `IRR_DB_PATH` | Override database path | No |
 | `IRR_LOG_LEVEL` | Override log level | No |
 | `IRR_LOG_FORMAT` | Override log format | No |
-| `IRR_API_BGPQ4_SOURCES` | Override sources for the API service (comma-separated, e.g. `RADB,RPKI`) | No |
+| `IRR_API_BGPQ4_SOURCES` | Override sources for the API service (comma-separated, e.g. `RADB,RIPE,ARIN,APNIC,LACNIC,AFRINIC,RPKI`) | No |
 
 ## Usage
 

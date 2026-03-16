@@ -5,7 +5,7 @@ from pydantic_settings import BaseSettings
 
 class Settings(BaseSettings):
     bgpq4_cmd: str = "wsl,bgpq4"         # Comma-separated command parts
-    bgpq4_sources: str = "RADB"  # Comma-separated IRR sources, e.g. "RADB,RPKI"
+    bgpq4_sources: str = "RADB,RIPE,ARIN,APNIC,LACNIC,AFRINIC,RPKI"  # Comma-separated IRR sources
     bgpq4_timeout: int = 120
     bgpq4_aggregate: bool = True
     log_level: str = "INFO"
