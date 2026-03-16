@@ -39,7 +39,7 @@ def create_irr_client(config: Config):
     return BGPQ4Client(
         bgpq4_cmd=config.bgpq4.cmd,
         timeout=config.bgpq4.timeout_seconds,
-        source=config.bgpq4.source,
+        sources=config.bgpq4.sources,
         aggregate=config.bgpq4.aggregate,
     )
 
@@ -222,9 +222,8 @@ def cmd_fetch(config: Config, args: argparse.Namespace) -> int:
 
     # Store snapshot
     store = SnapshotStore(config.database.path)
-    store.migrate()
-
     try:
+        store.migrate()
         snapshot_id = store.save_snapshot(
             target=target,
             target_type=detect_target_type(target),
@@ -238,8 +237,8 @@ def cmd_fetch(config: Config, args: argparse.Namespace) -> int:
         store.close()
 
     print_output(
-        f"Found {len(result.ipv4_prefixes):,} IPv4 prefixes, "
-        f"{len(result.ipv6_prefixes):,} IPv6 prefixes",
+        f"IPv4: {result.ipv4_raw_count:,} raw -> {len(result.ipv4_prefixes):,} aggregated  "
+        f"IPv6: {result.ipv6_raw_count:,} raw -> {len(result.ipv6_prefixes):,} aggregated",
         args.json, args.quiet
     )
     print_output(f"Snapshot saved (id: {snapshot_id}, hash: {snapshot.content_hash[:12]}...)", args.json, args.quiet)
@@ -249,7 +248,9 @@ def cmd_fetch(config: Config, args: argparse.Namespace) -> int:
             'target': target,
             'snapshot': {
                 'id': snapshot_id,
+                'ipv4_raw_count': result.ipv4_raw_count,
                 'ipv4_count': len(result.ipv4_prefixes),
+                'ipv6_raw_count': result.ipv6_raw_count,
                 'ipv6_count': len(result.ipv6_prefixes),
                 'hash': snapshot.content_hash,
                 'sources': result.sources_queried,
@@ -356,7 +357,7 @@ def cmd_submit(config: Config, args: argparse.Namespace) -> int:
 
         # Get IRR sources from snapshot
         snapshot = store.get_snapshot_by_id(diff_record.new_snapshot_id)
-        irr_sources = snapshot.irr_sources if snapshot else [config.bgpq4.source]
+        irr_sources = snapshot.irr_sources if snapshot else list(config.bgpq4.sources)
 
         # Submit ticket
         client = TicketingClient(
@@ -443,16 +444,15 @@ def cmd_run(config: Config, args: argparse.Namespace) -> int:
         return 1
 
     print_output(
-        f"Found {len(fetch_result.ipv4_prefixes):,} IPv4, "
-        f"{len(fetch_result.ipv6_prefixes):,} IPv6 prefixes",
+        f"IPv4: {fetch_result.ipv4_raw_count:,} raw -> {len(fetch_result.ipv4_prefixes):,} aggregated  "
+        f"IPv6: {fetch_result.ipv6_raw_count:,} raw -> {len(fetch_result.ipv6_prefixes):,} aggregated",
         args.json, args.quiet
     )
 
     # Step 2: Store snapshot
     store = SnapshotStore(config.database.path)
-    store.migrate()
-
     try:
+        store.migrate()
         # Get previous snapshot before saving new one
         # Find the most recent snapshot that is older than (now - lookback)
         lookback_seconds = config.diff.lookback_hours * 3600
@@ -577,7 +577,9 @@ def cmd_run(config: Config, args: argparse.Namespace) -> int:
                 'timestamp': datetime.now(timezone.utc).isoformat(),
                 'snapshot': {
                     'id': snapshot_id,
+                    'ipv4_raw_count': fetch_result.ipv4_raw_count,
                     'ipv4_count': len(fetch_result.ipv4_prefixes),
+                    'ipv6_raw_count': fetch_result.ipv6_raw_count,
                     'ipv6_count': len(fetch_result.ipv6_prefixes),
                     'hash': snapshot.content_hash,
                 },
@@ -618,8 +620,8 @@ def cmd_run_all(config: Config, args: argparse.Namespace) -> int:
         run_args = argparse.Namespace(
             target=target,
             dry_run=dry_run,
-            json=args.json,
-            quiet=True,  # Quiet individual runs
+            json=False,   # Suppress per-target JSON; summary is printed below
+            quiet=True,   # Suppress per-target human output too
             verbose=args.verbose,
         )
 

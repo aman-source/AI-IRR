@@ -14,7 +14,7 @@ class BGPQ4Config:
     """BGPQ4 tool configuration."""
     cmd: List[str] = field(default_factory=lambda: ["wsl", "bgpq4"])
     timeout_seconds: int = 120
-    source: str = "RADB"
+    sources: List[str] = field(default_factory=lambda: ["RADB"])
     aggregate: bool = True
 
 
@@ -131,10 +131,18 @@ def load_config(config_path: str) -> Config:
     # BGPQ4 config
     if 'bgpq4' in raw_config:
         bgpq4_raw = raw_config['bgpq4']
+        # Support both new `sources` (list) and legacy `source` (string) keys
+        if 'sources' in bgpq4_raw:
+            raw_sources = bgpq4_raw['sources']
+            sources = [raw_sources] if isinstance(raw_sources, str) else list(raw_sources)
+        elif 'source' in bgpq4_raw:
+            sources = [bgpq4_raw['source']]
+        else:
+            sources = config.bgpq4.sources
         config.bgpq4 = BGPQ4Config(
             cmd=bgpq4_raw.get('cmd', config.bgpq4.cmd),
             timeout_seconds=bgpq4_raw.get('timeout_seconds', config.bgpq4.timeout_seconds),
-            source=bgpq4_raw.get('source', config.bgpq4.source),
+            sources=sources,
             aggregate=bgpq4_raw.get('aggregate', config.bgpq4.aggregate),
         )
 
@@ -206,7 +214,7 @@ def load_config(config_path: str) -> Config:
 
 
 # Valid IRR sources for bgpq4 -S flag
-VALID_BGPQ4_SOURCES = {'RIPE', 'RADB', 'ARIN', 'APNIC', 'LACNIC', 'AFRINIC'}
+VALID_BGPQ4_SOURCES = {'RIPE', 'RADB', 'ARIN', 'APNIC', 'LACNIC', 'AFRINIC', 'RPKI'}
 
 
 class ConfigValidationError(ValueError):
@@ -226,12 +234,15 @@ def validate_config(config: Config) -> None:
     """
     errors = []
 
-    # Validate BGPQ4 source
-    if config.bgpq4.source.upper() not in VALID_BGPQ4_SOURCES:
-        errors.append(
-            f"Unknown BGPQ4 source: {config.bgpq4.source}. "
-            f"Valid sources: {sorted(VALID_BGPQ4_SOURCES)}"
-        )
+    # Validate BGPQ4 sources
+    for src in config.bgpq4.sources:
+        if src.upper() not in VALID_BGPQ4_SOURCES:
+            errors.append(
+                f"Unknown BGPQ4 source: {src}. "
+                f"Valid sources: {sorted(VALID_BGPQ4_SOURCES)}"
+            )
+    if not config.bgpq4.sources:
+        errors.append("bgpq4.sources must not be empty")
 
     # Validate BGPQ4 timeout
     if config.bgpq4.timeout_seconds <= 0:

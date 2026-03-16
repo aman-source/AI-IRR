@@ -29,7 +29,7 @@ class TestConfigDefaults:
         """Test that default config is created with expected values."""
         config = get_default_config()
         assert isinstance(config, Config)
-        assert config.bgpq4.source == 'RADB'
+        assert config.bgpq4.sources == ['RADB']
         assert config.targets == []
 
     def test_bgpq4_config_defaults(self):
@@ -37,7 +37,7 @@ class TestConfigDefaults:
         config = BGPQ4Config()
         assert config.cmd == ["wsl", "bgpq4"]
         assert config.timeout_seconds == 120
-        assert config.source == "RADB"
+        assert config.sources == ["RADB"]
         assert config.aggregate is True
 
     def test_database_config_defaults(self):
@@ -127,12 +127,13 @@ class TestValidateConfig:
         assert 'APNIC' in VALID_BGPQ4_SOURCES
         assert 'LACNIC' in VALID_BGPQ4_SOURCES
         assert 'AFRINIC' in VALID_BGPQ4_SOURCES
+        assert 'RPKI' in VALID_BGPQ4_SOURCES
         assert 'NTTCOM' not in VALID_BGPQ4_SOURCES
 
     def test_validate_valid_config(self):
         """Test validation passes for valid config."""
         config = Config(
-            bgpq4=BGPQ4Config(source='RADB', timeout_seconds=120),
+            bgpq4=BGPQ4Config(sources=['RADB'], timeout_seconds=120),
             ticketing=TicketingConfig(timeout_seconds=30, max_retries=3),
             logging=LoggingConfig(level='INFO', format='json'),
             diff=DiffConfig(lookback_hours=24),
@@ -140,16 +141,23 @@ class TestValidateConfig:
         # Should not raise
         validate_config(config)
 
+    def test_validate_valid_config_multi_source(self):
+        """Test validation passes for multi-source config including RPKI."""
+        config = Config(
+            bgpq4=BGPQ4Config(sources=['RADB', 'RIPE', 'RPKI'], timeout_seconds=120),
+        )
+        validate_config(config)
+
     def test_validate_unknown_bgpq4_source(self):
         """Test validation fails for unknown BGPQ4 source."""
-        config = Config(bgpq4=BGPQ4Config(source='UNKNOWN'))
+        config = Config(bgpq4=BGPQ4Config(sources=['UNKNOWN']))
         with pytest.raises(ConfigValidationError) as exc_info:
             validate_config(config)
         assert "Unknown BGPQ4 source" in str(exc_info.value)
 
     def test_validate_nttcom_source_rejected(self):
         """Test that NTTCOM source is not valid."""
-        config = Config(bgpq4=BGPQ4Config(source='NTTCOM'))
+        config = Config(bgpq4=BGPQ4Config(sources=['NTTCOM']))
         with pytest.raises(ConfigValidationError) as exc_info:
             validate_config(config)
         assert "Unknown BGPQ4 source" in str(exc_info.value)
@@ -202,7 +210,7 @@ class TestValidateConfig:
     def test_validate_multiple_errors(self):
         """Test validation reports multiple errors."""
         config = Config(
-            bgpq4=BGPQ4Config(source='UNKNOWN', timeout_seconds=0),
+            bgpq4=BGPQ4Config(sources=['UNKNOWN'], timeout_seconds=0),
             logging=LoggingConfig(level='INVALID'),
         )
         with pytest.raises(ConfigValidationError) as exc_info:
@@ -244,7 +252,7 @@ diff:
             config = load_config(f.name)
 
         assert config.targets == ['AS15169']
-        assert config.bgpq4.source == 'RADB'
+        assert config.bgpq4.sources == ['RADB']
         assert config.bgpq4.timeout_seconds == 60
         assert config.bgpq4.aggregate is True
         assert config.database.path == './test.db'
@@ -297,13 +305,13 @@ ticketing:
             config = load_config(f.name)
 
         # Should have default values
-        assert config.bgpq4.source == 'RADB'
+        assert config.bgpq4.sources == ['RADB']
         assert config.bgpq4.timeout_seconds == 120
 
         os.unlink(f.name)
 
     def test_load_config_bgpq4_custom_cmd(self):
-        """Test loading config with custom bgpq4 command."""
+        """Test loading config with custom bgpq4 command and legacy source key."""
         config_content = """
 bgpq4:
   cmd: ["/usr/local/bin/bgpq4"]
@@ -315,6 +323,44 @@ bgpq4:
             config = load_config(f.name)
 
         assert config.bgpq4.cmd == ["/usr/local/bin/bgpq4"]
-        assert config.bgpq4.source == "RIPE"
+        assert config.bgpq4.sources == ["RIPE"]
 
         os.unlink(f.name)
+
+    def test_load_config_bgpq4_sources_list(self):
+        """Test loading config with new sources list key."""
+        config_content = """
+bgpq4:
+  sources:
+    - RADB
+    - RPKI
+"""
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False) as f:
+            f.write(config_content)
+            f.flush()
+            config = load_config(f.name)
+
+        assert config.bgpq4.sources == ["RADB", "RPKI"]
+
+        os.unlink(f.name)
+
+    def test_load_config_bgpq4_sources_scalar_string_rejected(self):
+        """sources: 'RADB,RPKI' as a single scalar string is treated as one unknown source."""
+        config_content = """
+bgpq4:
+  sources: "RADB,RPKI"
+"""
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False) as f:
+            f.write(config_content)
+            fname = f.name
+
+        try:
+            with pytest.raises(ConfigValidationError) as exc_info:
+                load_config(fname)
+        finally:
+            os.unlink(fname)
+
+        # The whole "RADB,RPKI" string is treated as one unknown source name.
+        # Users must use a YAML list, not a comma-separated scalar.
+        assert "Unknown BGPQ4 source" in str(exc_info.value)
+        assert "RADB,RPKI" in str(exc_info.value)

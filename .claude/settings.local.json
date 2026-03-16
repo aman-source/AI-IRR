@@ -1,0 +1,19 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(wsl bgpq4:*)",
+      "Bash(wsl which:*)",
+      "Bash(del \"c:\\\\Users\\\\hp\\\\Desktop\\\\AI-IRR\\\\app\\\\radb_client.py\")",
+      "Bash(python -m pytest:*)",
+      "Bash(wsl whoami:*)",
+      "Bash(wsl bash:*)",
+      "Bash(python -m app.cli:*)",
+      "Bash(echo \"$TEAMS_WEBHOOK_URL\")",
+      "Bash(TEAMS_WEBHOOK_URL=\"https://defaulte741d71cc6b647b0803c0f3b32b075.56.environment.api.powerplatform.com/powerautomate/automations/direct/workflows/814a9a64040f4da58e2456260682d0e8/triggers/manual/paths/invoke?api-version=1&sp=%2Ftriggers%2Fmanual%2Frun&sv=1.0&sig=dTfpH3ZnosLHp9dWbOPzLku7Bwz5EglO14b_PN8oaPo\" python -m app.cli test-teams)",
+      "Bash(git pull:*)",
+      "Bash(python -c \"import sys,json; d=json.load\\(sys.stdin\\); print\\(len\\(d[''''pl'''']\\), ''''prefixes''''\\)\")",
+      "Bash(python -c \"import sys,json; d=json.load\\(sys.stdin\\); print\\(len\\(d[''''pl'''']\\), ''''IPv4 aggregated''''\\)\")",
+      "Bash(python -c \":*)"
+    ]
+  }
+}

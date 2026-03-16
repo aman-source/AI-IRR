@@ -6,6 +6,7 @@ import time
 from contextlib import asynccontextmanager
 
 from fastapi import Depends, FastAPI, HTTPException
+from pydantic import ValidationError
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.bgpq4_client import BGPQ4Client
@@ -45,7 +46,7 @@ async def lifespan(app: FastAPI):
     app.state.bgpq4_client = BGPQ4Client(
         bgpq4_cmd=settings.bgpq4_cmd_list,
         timeout=settings.bgpq4_timeout,
-        source=settings.bgpq4_source,
+        sources=settings.bgpq4_sources_list,
         aggregate=settings.bgpq4_aggregate,
     )
     logging.getLogger("app").info("IRR Prefix Lookup API started (BGPQ4)")
@@ -102,7 +103,9 @@ async def _do_fetch(
         target=target,
         ipv4_prefixes=sorted(result.ipv4_prefixes),
         ipv6_prefixes=sorted(result.ipv6_prefixes),
+        ipv4_raw_count=result.ipv4_raw_count,
         ipv4_count=len(result.ipv4_prefixes),
+        ipv6_raw_count=result.ipv6_raw_count,
         ipv6_count=len(result.ipv6_prefixes),
         sources_queried=result.sources_queried,
         errors=result.errors,
@@ -118,7 +121,7 @@ async def health():
     return HealthResponse(
         status="healthy",
         version="2.0.0",
-        source=settings.bgpq4_source,
+        sources=settings.bgpq4_sources_list,
     )
 
 
@@ -147,5 +150,8 @@ async def get_prefixes(
     client: BGPQ4Client = Depends(get_bgpq4_client),
 ):
     """Convenience GET endpoint for quick prefix lookups."""
-    req = FetchRequest(target=target)
+    try:
+        req = FetchRequest(target=target)
+    except ValidationError as e:
+        raise HTTPException(status_code=422, detail=str(e))
     return await _do_fetch(req.target, client)

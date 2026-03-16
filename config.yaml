@@ -2,12 +2,15 @@
 # =============================================================
 
 # BGPQ4 settings
-# BGPQ4 queries IRR databases via a single command. RADB mirrors all 5 RIRs
-# (RIPE, ARIN, APNIC, LACNIC, AFRINIC), so querying RADB alone is sufficient.
-# BGPQ4 handles AS-SET expansion and prefix aggregation automatically.
+# BGPQ4 queries IRR databases via a single command.
+# Multiple sources are passed as a comma-separated list to bgpq4's -S flag.
+# Available sources: RADB, RIPE, ARIN, APNIC, LACNIC, AFRINIC, RPKI
+# RPKI validates prefixes against Route Origin Authorizations (ROAs).
 bgpq4:
   cmd: ["bgpq4"]      # Command to invoke bgpq4 (via WSL on Windows)
-  source: "RADB"              # IRR source (-S flag). RADB mirrors all RIRs.
+  sources:            # IRR sources (-S flag). bgpq4 accepts multiple sources.
+    - RADB            # Global IRR mirror (mirrors all 5 RIRs)
+    - RPKI            # RPKI ROA validation
   aggregate: true             # Aggregate prefixes (-A flag)
   timeout_seconds: 120        # Subprocess timeout
 

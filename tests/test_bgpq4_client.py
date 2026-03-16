@@ -20,20 +20,30 @@ class TestBGPQ4Client:
         client = BGPQ4Client()
         assert client.bgpq4_cmd == ["wsl", "bgpq4"]
         assert client.timeout == 120
-        assert client.source == "RADB"
+        assert client.sources == ["RADB"]
         assert client.aggregate is True
 
     def test_init_custom(self):
         client = BGPQ4Client(
             bgpq4_cmd=["bgpq4"],
             timeout=60,
-            source="RIPE",
+            sources=["RIPE"],
             aggregate=False,
         )
         assert client.bgpq4_cmd == ["bgpq4"]
         assert client.timeout == 60
-        assert client.source == "RIPE"
+        assert client.sources == ["RIPE"]
         assert client.aggregate is False
+
+    def test_init_sources_none_defaults_to_radb(self):
+        """Passing sources=None uses ["RADB"] default."""
+        client = BGPQ4Client(sources=None)
+        assert client.sources == ["RADB"]
+
+    def test_init_sources_empty_list_raises(self):
+        """Passing sources=[] raises ValueError — empty is not valid."""
+        with pytest.raises(ValueError, match="sources must not be empty"):
+            BGPQ4Client(sources=[])
 
     @patch('subprocess.run')
     def test_fetch_prefixes_ipv4(self, mock_run):
@@ -177,7 +187,7 @@ class TestBGPQ4Client:
             returncode=0, stdout='{"pl": []}', stderr=""
         )
 
-        client = BGPQ4Client(source="RADB", aggregate=True)
+        client = BGPQ4Client(sources=["RADB"], aggregate=True)
         client._run_bgpq4("AS15169", ipv6=False)
 
         cmd = mock_run.call_args[0][0]
@@ -189,6 +199,32 @@ class TestBGPQ4Client:
         idx = cmd.index("-S")
         assert cmd[idx + 1] == "RADB"
         assert "AS15169" in cmd
+
+    @patch('subprocess.run')
+    def test_command_flags_multiple_sources(self, mock_run):
+        """Verify multiple sources are joined with comma in -S flag."""
+        mock_run.return_value = MagicMock(
+            returncode=0, stdout='{"pl": []}', stderr=""
+        )
+
+        client = BGPQ4Client(sources=["RADB", "RPKI"])
+        client._run_bgpq4("AS15169", ipv6=False)
+
+        cmd = mock_run.call_args[0][0]
+        idx = cmd.index("-S")
+        assert cmd[idx + 1] == "RADB,RPKI"
+
+    @patch('subprocess.run')
+    def test_fetch_prefixes_multi_source_stored(self, mock_run):
+        """Verify sources_queried contains all configured sources."""
+        mock_run.return_value = MagicMock(
+            returncode=0, stdout='{"pl": []}', stderr=""
+        )
+
+        client = BGPQ4Client(sources=["RADB", "RIPE", "RPKI"])
+        result = client.fetch_prefixes("AS15169")
+
+        assert result.sources_queried == ["RADB", "RIPE", "RPKI"]
 
     @patch('subprocess.run')
     def test_command_flags_ipv6(self, mock_run):

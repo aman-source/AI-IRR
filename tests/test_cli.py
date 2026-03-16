@@ -33,7 +33,7 @@ def mock_config():
     """Create a mock config for testing."""
     return Config(
         targets=['AS15169', 'AS16509'],
-        bgpq4=BGPQ4Config(cmd=['wsl', 'bgpq4'], timeout_seconds=120, source='RADB'),
+        bgpq4=BGPQ4Config(cmd=['wsl', 'bgpq4'], timeout_seconds=120, sources=['RADB']),
         database=DatabaseConfig(path=':memory:'),
         ticketing=TicketingConfig(base_url='https://api.example.com', api_token='test-token'),
         logging=LoggingConfig(level='INFO', format='text'),

@@ -6,9 +6,11 @@ Uses [BGPQ4](https://github.com/bgp/bgpq4) for IRR queries, which handles AS-SET
 
 ## Features
 
-- **BGPQ4-Powered Queries**: Single tool handles all IRR lookups via RADB (which mirrors all 5 RIRs)
-- **AS-SET Support**: Query AS-SETs (e.g., `AS-GOOGLE`) — BGPQ4 expands them automatically
-- **Prefix Aggregation**: Multiple specific prefixes are aggregated into summary routes (e.g., five /24s become one /22)
+- **Multi-Source IRR Queries**: Query all 7 sources simultaneously — RADB, RIPE, ARIN, APNIC, LACNIC, AFRINIC, and RPKI
+- **RPKI Validation**: Include Route Origin Authorization (ROA) data alongside IRR data
+- **Python Aggregation**: Post-processes results with `ipaddress.collapse_addresses()` for minimal supernet sets
+- **Raw vs. Aggregated Counts**: Tracks both the raw prefix count and the aggregated count (e.g., 238 raw → 10 aggregated for AS-BYTEDANCE)
+- **AS-SET Support**: Query AS-SETs (e.g., `AS-BYTEDANCE`) — BGPQ4 expands them automatically
 - **IPv4 & IPv6**: Full dual-stack support
 - **Snapshot Storage**: Persist prefix snapshots in SQLite for historical tracking
 - **Change Detection**: Compute diffs between snapshots to detect added/removed prefixes
@@ -30,8 +32,8 @@ Uses [BGPQ4](https://github.com/bgp/bgpq4) for IRR queries, which handles AS-SET
 # In WSL
 sudo apt update && sudo apt install -y bgpq4
 
-# Verify
-wsl bgpq4 -4 -j -A -S RADB -l pl AS15169
+# Verify (query all 7 sources for AS-BYTEDANCE)
+wsl bgpq4 -4 -j -A -S RADB,ARIN,RIPE,APNIC,LACNIC,AFRINIC,RPKI -l pl AS-BYTEDANCE
 ```
 
 ## Installation
@@ -58,11 +60,11 @@ python -m app.cli init-db
 # 2. Fetch prefixes for an ASN
 python -m app.cli fetch --target AS15169
 
-# 3. Fetch prefixes for an AS-SET
-python -m app.cli fetch --target AS-GOOGLE
+# 3. Fetch prefixes for an AS-SET (e.g., ByteDance)
+python -m app.cli fetch --target AS-BYTEDANCE
 
 # 4. Run all-in-one (fetch + diff + ticket if changes)
-python -m app.cli run --target AS15169 --dry-run
+python -m app.cli run --target AS-BYTEDANCE --dry-run
 
 # 5. Run for all configured targets
 python -m app.cli run-all --dry-run
@@ -74,18 +76,24 @@ python -m app.cli run-all --dry-run
 
 ```yaml
 # BGPQ4 settings
-# RADB mirrors all 5 RIRs, so querying RADB alone is sufficient.
 bgpq4:
   cmd: ["wsl", "bgpq4"]      # Command to invoke bgpq4
-  source: "RADB"              # IRR source (-S flag)
-  aggregate: true             # Aggregate prefixes (-A flag)
+  sources:                    # IRR sources — bgpq4 queries all at once via -S RADB,RPKI,...
+    - RADB                    # Global IRR mirror (mirrors all 5 RIRs)
+    - RPKI                    # RPKI ROA validation
+    # - RIPE                  # Uncomment to query individual RIRs directly
+    # - ARIN
+    # - APNIC
+    # - LACNIC
+    # - AFRINIC
+  aggregate: true             # Aggregate prefixes with bgpq4's -A flag
   timeout_seconds: 120        # Subprocess timeout
 
 # Targets to monitor — ASNs or AS-SETs
 targets:
-  - AS15169    # Google
-  - AS16509    # Amazon
-  - AS8075     # Microsoft
+  - AS15169        # Google
+  - AS16509        # Amazon
+  - AS-BYTEDANCE   # ByteDance
 
 # Database settings
 database:
@@ -109,9 +117,11 @@ diff:
 
 # Microsoft Teams alerts (via Power Automate webhook)
 teams:
-  webhook_url: "${TEAMS_WEBHOOK_URL}"   # Set env var or paste URL directly
+  webhook_url: "${TEAMS_WEBHOOK_URL}"
   timeout_seconds: 15
 ```
+
+> **Note:** The legacy single-string `source: "RADB"` key is still accepted for backward compatibility and treated as `sources: ["RADB"]`.
 
 ### Environment Variables
 
@@ -124,6 +134,7 @@ teams:
 | `IRR_DB_PATH` | Override database path | No |
 | `IRR_LOG_LEVEL` | Override log level | No |
 | `IRR_LOG_FORMAT` | Override log format | No |
+| `IRR_API_BGPQ4_SOURCES` | Override sources for the API service (comma-separated, e.g. `RADB,RPKI`) | No |
 
 ## Usage
 
@@ -134,13 +145,19 @@ teams:
 python -m app.cli fetch --target AS15169
 
 # Fetch for an AS-SET (expands all member ASNs)
-python -m app.cli fetch --target AS-GOOGLE
+python -m app.cli fetch --target AS-BYTEDANCE
 
 # Verbose output
 python -m app.cli fetch --target AS15169 -v
 
-# JSON output
+# JSON output (includes raw and aggregated counts)
 python -m app.cli fetch --target AS15169 --json
+```
+
+Example output:
+```
+IPv4: 238 raw -> 10 aggregated  IPv6: 126 raw -> 3 aggregated
+Snapshot saved (id: 1, hash: a3f9c2b1d4e8...)
 ```
 
 ### Compute Diff
@@ -164,7 +181,7 @@ python -m app.cli submit --target AS15169
 
 ```bash
 # Single target
-python -m app.cli run --target AS15169 --dry-run
+python -m app.cli run --target AS-BYTEDANCE --dry-run
 
 # All configured targets
 python -m app.cli run-all --dry-run
@@ -197,6 +214,7 @@ pytest tests/ -v --cov=app --cov-report=term-missing
 
 # Run specific test file
 pytest tests/test_bgpq4_client.py -v
+pytest tests/test_aggregation.py -v
 ```
 
 ## Daily Cron Job
@@ -212,7 +230,7 @@ pytest tests/test_bgpq4_client.py -v
 AI-IRR/
 ├── app/
 │   ├── __init__.py
-│   ├── bgpq4_client.py     # BGPQ4 IRR client (subprocess)
+│   ├── bgpq4_client.py      # BGPQ4 IRR client — multi-source, Python aggregation
 │   ├── api_proxy_client.py  # Optional API proxy client
 │   ├── config.py            # Configuration loading and validation
 │   ├── cli.py               # CLI entry point
@@ -227,14 +245,18 @@ AI-IRR/
 │   ├── settings.py          # API settings
 │   └── dependencies.py      # Dependency injection
 ├── tests/
+│   ├── test_aggregation.py  # Python aggregation + AS-BYTEDANCE scenario
 │   ├── test_bgpq4_client.py
 │   ├── test_cli.py
 │   ├── test_config.py
 │   ├── test_store.py
 │   ├── test_diff.py
+│   ├── test_api.py
 │   └── test_ticketing.py
-├── data/                     # Database files (runtime)
-├── config.yaml               # Configuration
+├── docs/
+│   └── MULTI_IRR_SOURCES.md
+├── data/                    # Database files (runtime)
+├── config.yaml              # Configuration
 ├── requirements.txt
 ├── pyproject.toml
 └── README.md
@@ -242,13 +264,41 @@ AI-IRR/
 
 ## How It Works
 
-1. **BGPQ4** queries RADB (which mirrors all 5 RIRs: RIPE, ARIN, APNIC, LACNIC, AFRINIC) for prefixes
-2. Prefixes are **aggregated** automatically (e.g., five /24s → one /22)
+1. **BGPQ4** queries all configured IRR sources simultaneously (e.g., `-S RADB,RPKI`) for prefixes
+2. **Python aggregation** applies `ipaddress.collapse_addresses()` — removes covered subnets and merges adjacent networks into the minimal supernet set
 3. For AS-SETs, BGPQ4 **recursively expands** all member ASNs
-4. Results are stored as a **snapshot** in SQLite
-5. **Diff** is computed against the previous snapshot
-6. If changes are detected, a **ticket** is created via the AT&T API
-7. A **Teams Adaptive Card** alert is posted via Power Automate webhook
+4. Both **raw count** (from bgpq4) and **aggregated count** (after Python collapse) are tracked
+5. Results are stored as a **snapshot** in SQLite
+6. **Diff** is computed against the previous snapshot
+7. If changes are detected, a **ticket** is created via the AT&T API
+8. A **Teams Adaptive Card** alert is posted via Power Automate webhook
+
+### IRR Sources
+
+| Source | Type | Coverage |
+|--------|------|----------|
+| RADB | IRR mirror | Global — mirrors all 5 RIRs |
+| RIPE | RIR | Europe, Middle East, Central Asia |
+| ARIN | RIR | North America |
+| APNIC | RIR | Asia-Pacific |
+| LACNIC | RIR | Latin America & Caribbean |
+| AFRINIC | RIR | Africa |
+| RPKI | ROA validation | Global — cryptographic route origin validation |
+
+### Aggregation Example (AS-BYTEDANCE)
+
+```
+Sources: RADB,ARIN,RIPE,APNIC,LACNIC,AFRINIC,RPKI
+
+IPv4: 238 raw prefixes → 10 aggregated
+  71.18.0.0/16       101.45.0.0/16      130.44.212.0/22
+  139.177.224.0/19   147.160.176.0/20   180.240.232.0/22
+  192.64.14.0/23     199.103.24.0/23    202.52.224.0/21
+  202.52.240.0/21
+
+IPv6: 126 raw prefixes → 3 aggregated
+  2404:8d04:2643::/48   2404:8d04:4642::/48   2605:340::/32
+```
 
 ## Troubleshooting
 
@@ -262,11 +312,26 @@ If not installed: `wsl sudo apt install bgpq4`
 
 ### "bgpq4 timed out"
 
-Increase `timeout_seconds` in the `bgpq4:` config section. Large AS-SETs may take longer to expand.
+Increase `timeout_seconds` in the `bgpq4:` config section. Large AS-SETs with many sources may take longer.
 
 ### "No snapshot found for target"
 
 Run `fetch` first to create an initial snapshot before running `diff` or `submit`.
+
+### "Unknown BGPQ4 source: RADB,RPKI"
+
+You used a comma-separated scalar in YAML instead of a list. Use:
+```yaml
+# Correct
+bgpq4:
+  sources:
+    - RADB
+    - RPKI
+
+# Wrong — treated as one unknown source name
+bgpq4:
+  sources: "RADB,RPKI"
+```
 
 ### "Ticket creation failed"
 
@@ -275,8 +340,8 @@ Verify that `ABC_BASE_URL` and `ABC_TOKEN` environment variables are set and the
 ### Teams alert not appearing
 
 1. Confirm `TEAMS_WEBHOOK_URL` is set to the Power Automate webhook URL.
-2. The webhook must use a **"When a HTTP request is received"** or **"Teams webhook"** trigger configured to accept the Adaptive Card format.
-3. The "Post card in a chat or channel" action inside the flow must reference `triggerBody()?['attachments'][0]['content']` as the card content.
+2. The webhook must use a **"When a HTTP request is received"** trigger configured to accept Adaptive Card format.
+3. The "Post card in a chat or channel" action must reference `triggerBody()?['attachments'][0]['content']` as the card content.
 4. Test with a direct `curl` POST — a `202 Accepted` response means the webhook is reachable.
 
 ### Database Locked

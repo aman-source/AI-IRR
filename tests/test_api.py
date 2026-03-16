@@ -1,7 +1,7 @@
 """Tests for the FastAPI application."""
 
 import pytest
-from unittest.mock import Mock, patch, MagicMock
+from unittest.mock import MagicMock
 from fastapi.testclient import TestClient
 
 from api.main import app
@@ -10,15 +10,22 @@ from app.bgpq4_client import PrefixResult
 
 @pytest.fixture
 def client():
-    """Create a test client for the FastAPI app."""
+    """Create a test client with a mock bgpq4 client injected into app state."""
+    mock = MagicMock()
+    mock.fetch_prefixes.return_value = PrefixResult(
+        ipv4_prefixes=set(),
+        ipv6_prefixes=set(),
+        sources_queried=["RADB"],
+        errors=[],
+    )
+    app.state.bgpq4_client = mock
     return TestClient(app)
 
 
 @pytest.fixture
-def mock_bgpq4_client():
-    """Create a mock BGPQ4Client."""
-    mock = MagicMock()
-    return mock
+def mock_bgpq4_client(client):
+    """Return the mock BGPQ4Client already injected into app state."""
+    return app.state.bgpq4_client
 
 
 class TestHealthEndpoint:
@@ -31,24 +38,21 @@ class TestHealthEndpoint:
         data = response.json()
         assert data["status"] == "healthy"
         assert "version" in data
-        assert "source" in data
+        assert "sources" in data
+        assert isinstance(data["sources"], list)
 
 
 class TestFetchEndpoint:
     """Tests for the /api/v1/fetch endpoint."""
 
-    @patch('api.main.BGPQ4Client')
-    def test_fetch_success(self, mock_bgpq4_class, client):
+    def test_fetch_success(self, client, mock_bgpq4_client):
         """Test successful fetch returns prefixes."""
-        # Setup mock
-        mock_client = MagicMock()
-        mock_client.fetch_prefixes.return_value = PrefixResult(
+        mock_bgpq4_client.fetch_prefixes.return_value = PrefixResult(
             ipv4_prefixes={"1.0.0.0/8", "2.0.0.0/8"},
             ipv6_prefixes={"2001::/32"},
             sources_queried=["RADB"],
             errors=[]
         )
-        mock_bgpq4_class.return_value = mock_client
 
         response = client.post(
             "/api/v1/fetch",
@@ -71,18 +75,14 @@ class TestFetchEndpoint:
         )
         assert response.status_code == 422
 
-    @patch('api.main.BGPQ4Client')
-    def test_fetch_no_results_with_errors(self, mock_bgpq4_class, client):
+    def test_fetch_no_results_with_errors(self, client, mock_bgpq4_client):
         """Test fetch returns 502 when no results and errors present."""
-        # Setup mock
-        mock_client = MagicMock()
-        mock_client.fetch_prefixes.return_value = PrefixResult(
+        mock_bgpq4_client.fetch_prefixes.return_value = PrefixResult(
             ipv4_prefixes=set(),
             ipv6_prefixes=set(),
             sources_queried=["RADB"],
             errors=["Query failed"]
         )
-        mock_bgpq4_class.return_value = mock_client
 
         response = client.post(
             "/api/v1/fetch",
@@ -91,21 +91,17 @@ class TestFetchEndpoint:
 
         assert response.status_code == 502
         data = response.json()
-        assert "error" in data
         assert "detail" in data
+        assert "error" in data["detail"]
 
-    @patch('api.main.BGPQ4Client')
-    def test_fetch_partial_results_with_errors(self, mock_bgpq4_class, client):
+    def test_fetch_partial_results_with_errors(self, client, mock_bgpq4_client):
         """Test fetch returns 200 with partial results even if errors present."""
-        # Setup mock - IPv4 succeeded but IPv6 had errors
-        mock_client = MagicMock()
-        mock_client.fetch_prefixes.return_value = PrefixResult(
+        mock_bgpq4_client.fetch_prefixes.return_value = PrefixResult(
             ipv4_prefixes={"1.0.0.0/8"},
             ipv6_prefixes=set(),
             sources_queried=["RADB"],
             errors=["IPv6 lookup failed"]
         )
-        mock_bgpq4_class.return_value = mock_client
 
         response = client.post(
             "/api/v1/fetch",
@@ -122,18 +118,14 @@ class TestFetchEndpoint:
 class TestPrefixesGetEndpoint:
     """Tests for the /api/v1/prefixes/{target} GET endpoint."""
 
-    @patch('api.main.BGPQ4Client')
-    def test_get_prefixes_success(self, mock_bgpq4_class, client):
+    def test_get_prefixes_success(self, client, mock_bgpq4_client):
         """Test GET endpoint successfully retrieves prefixes."""
-        # Setup mock
-        mock_client = MagicMock()
-        mock_client.fetch_prefixes.return_value = PrefixResult(
+        mock_bgpq4_client.fetch_prefixes.return_value = PrefixResult(
             ipv4_prefixes={"1.0.0.0/8"},
             ipv6_prefixes={"2001::/32"},
             sources_queried=["RADB"],
             errors=[]
         )
-        mock_bgpq4_class.return_value = mock_client
 
         response = client.get("/api/v1/prefixes/AS15169")
 

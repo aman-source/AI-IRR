@@ -5,6 +5,7 @@ BGPQ4 handles AS-SET expansion, prefix aggregation, and database selection
 in a single command, replacing the multi-source WHOIS/REST approach.
 """
 
+import ipaddress
 import json
 import logging
 import shutil
@@ -15,11 +16,44 @@ from typing import List, Set
 logger = logging.getLogger("app.bgpq4_client")
 
 
+def collapse_prefixes(prefixes: Set[str]) -> Set[str]:
+    """Collapse/aggregate a set of prefix strings using ipaddress.collapse_addresses().
+
+    Removes covered subnets and merges adjacent networks into the minimal set
+    of supernets. Skips any invalid prefix strings.
+
+    Args:
+        prefixes: Set of CIDR prefix strings (e.g., {"10.0.0.0/16", "10.0.1.0/24"}).
+
+    Returns:
+        Minimal set of non-overlapping, non-adjacent prefix strings.
+    """
+    networks = []
+    for p in prefixes:
+        try:
+            networks.append(ipaddress.ip_network(p, strict=False))
+        except ValueError:
+            logger.warning(f"Skipping invalid prefix: {p}")
+    try:
+        return {str(n) for n in ipaddress.collapse_addresses(networks)}
+    except TypeError:
+        # collapse_addresses raises TypeError when IPv4 and IPv6 are mixed.
+        # Collapse each family separately and union the results.
+        v4 = [n for n in networks if n.version == 4]
+        v6 = [n for n in networks if n.version == 6]
+        return (
+            {str(n) for n in ipaddress.collapse_addresses(v4)} |
+            {str(n) for n in ipaddress.collapse_addresses(v6)}
+        )
+
+
 @dataclass
 class PrefixResult:
     """Result of fetching prefixes from IRR."""
     ipv4_prefixes: Set[str] = field(default_factory=set)
     ipv6_prefixes: Set[str] = field(default_factory=set)
+    ipv4_raw_count: int = 0   # prefix count before Python aggregation
+    ipv6_raw_count: int = 0   # prefix count before Python aggregation
     sources_queried: List[str] = field(default_factory=list)
     errors: List[str] = field(default_factory=list)
 
@@ -46,7 +80,7 @@ class BGPQ4Client:
         self,
         bgpq4_cmd: List[str] = None,
         timeout: int = 120,
-        source: str = "RADB",
+        sources: List[str] = None,
         aggregate: bool = True,
     ):
         """Initialize the BGPQ4 client.
@@ -55,12 +89,18 @@ class BGPQ4Client:
             bgpq4_cmd: Command to invoke bgpq4 (e.g., ["wsl", "bgpq4"]).
                         Defaults to ["wsl", "bgpq4"].
             timeout: Subprocess timeout in seconds.
-            source: IRR source for -S flag (e.g., "RADB").
+            sources: IRR sources for -S flag (e.g., ["RADB", "RPKI"]).
+                     bgpq4 accepts comma-separated sources: -S RADB,RPKI.
             aggregate: Whether to use -A flag for prefix aggregation.
         """
         self.bgpq4_cmd = bgpq4_cmd or ["wsl", "bgpq4"]
         self.timeout = timeout
-        self.source = source
+        if sources is None:
+            self.sources = ["RADB"]
+        elif not sources:
+            raise ValueError("sources must not be empty")
+        else:
+            self.sources = sources
         self.aggregate = aggregate
 
     def fetch_prefixes(self, target: str) -> PrefixResult:
@@ -73,30 +113,34 @@ class BGPQ4Client:
             PrefixResult with aggregated prefixes.
         """
         target = target.strip().upper()
-        result = PrefixResult(sources_queried=[self.source])
+        result = PrefixResult(sources_queried=list(self.sources))
 
         # Fetch IPv4
         try:
-            v4 = self._run_bgpq4(target, ipv6=False)
-            result.ipv4_prefixes = v4
+            v4_raw = self._run_bgpq4(target, ipv6=False)
+            result.ipv4_raw_count = len(v4_raw)
+            result.ipv4_prefixes = collapse_prefixes(v4_raw)
         except BGPQ4ClientError as e:
             result.errors.append(f"IPv4 query failed: {e}")
 
         # Fetch IPv6
         try:
-            v6 = self._run_bgpq4(target, ipv6=True)
-            result.ipv6_prefixes = v6
+            v6_raw = self._run_bgpq4(target, ipv6=True)
+            result.ipv6_raw_count = len(v6_raw)
+            result.ipv6_prefixes = collapse_prefixes(v6_raw)
         except BGPQ4ClientError as e:
             result.errors.append(f"IPv6 query failed: {e}")
 
         logger.info(
             f"BGPQ4 fetched for {target}: "
-            f"{len(result.ipv4_prefixes)} IPv4, "
-            f"{len(result.ipv6_prefixes)} IPv6 prefixes",
+            f"{result.ipv4_raw_count} IPv4 raw → {len(result.ipv4_prefixes)} aggregated, "
+            f"{result.ipv6_raw_count} IPv6 raw → {len(result.ipv6_prefixes)} aggregated",
             extra={'context': {
                 'target': target,
-                'source': self.source,
+                'sources': self.sources,
+                'ipv4_raw_count': result.ipv4_raw_count,
                 'ipv4_count': len(result.ipv4_prefixes),
+                'ipv6_raw_count': result.ipv6_raw_count,
                 'ipv6_count': len(result.ipv6_prefixes),
             }}
         )
@@ -118,7 +162,7 @@ class BGPQ4Client:
         cmd.append("-j")  # JSON output
         if self.aggregate:
             cmd.append("-A")  # Aggregate prefixes
-        cmd.extend(["-S", self.source])
+        cmd.extend(["-S", ",".join(self.sources)])
         cmd.extend(["-l", "pl"])
         cmd.append(target)
 
