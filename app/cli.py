@@ -571,6 +571,10 @@ def cmd_run(config: Config, args: argparse.Namespace) -> int:
                     diff=diff,
                     ticket_id=ticket_response.ticket_id if ticket_response else None,
                     dry_run=dry_run,
+                    ipv4_raw_count=fetch_result.ipv4_raw_count,
+                    ipv4_aggregated_count=len(fetch_result.ipv4_prefixes),
+                    ipv6_raw_count=fetch_result.ipv6_raw_count,
+                    ipv6_aggregated_count=len(fetch_result.ipv6_prefixes),
                 )
                 if not alert_sent and not dry_run:
                     logger.error(f"Teams alert FAILED for {target}")

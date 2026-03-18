@@ -16,7 +16,7 @@ bgpq4:
     - LACNIC          # Latin America & Caribbean
     - AFRINIC         # Africa
     - RPKI            # RPKI ROA validation
-  aggregate: true             # Aggregate prefixes (-A flag)
+  aggregate: true             # Aggregation is handled by Python (ipaddress.collapse_addresses)
   timeout_seconds: 120        # Subprocess timeout
 
 # API Proxy Mode (optional)
