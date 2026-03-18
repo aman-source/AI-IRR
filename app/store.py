@@ -279,7 +279,7 @@ class SnapshotStore:
         cursor = self.conn.execute(
             """
             SELECT * FROM snapshots
-            WHERE target = ? AND timestamp < ?
+            WHERE target = ? AND timestamp <= ?
             ORDER BY timestamp DESC, id DESC
             LIMIT 1
             """,

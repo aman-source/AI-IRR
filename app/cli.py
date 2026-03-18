@@ -566,11 +566,23 @@ def cmd_run(config: Config, args: argparse.Namespace) -> int:
                     webhook_url=config.teams.webhook_url,
                     timeout=config.teams.timeout_seconds,
                 )
-                notifier.notify(
+                alert_sent = notifier.notify(
                     target=target,
                     diff=diff,
                     ticket_id=ticket_response.ticket_id if ticket_response else None,
                     dry_run=dry_run,
+                )
+                if not alert_sent and not dry_run:
+                    logger.error(f"Teams alert FAILED for {target}")
+                    print_output(
+                        f"WARNING: Teams alert failed for {target} — check webhook URL and connectivity",
+                        args.json, args.quiet,
+                    )
+            else:
+                logger.warning("Teams webhook URL not configured — skipping alert")
+                print_output(
+                    "WARNING: Teams webhook URL not configured — set TEAMS_WEBHOOK_URL env var",
+                    args.json, args.quiet,
                 )
 
         # JSON output
