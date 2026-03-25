@@ -45,3 +45,55 @@ class ErrorResponse(BaseModel):
     error: str
     detail: str
     errors: list[str] = []
+
+
+# ---------------------------------------------------------------------------
+# DB read schemas
+# ---------------------------------------------------------------------------
+
+class TargetSummary(BaseModel):
+    target: str
+    target_type: str
+    ipv4_count: int
+    ipv6_count: int
+    last_snapshot: str   # ISO 8601
+    sources: list[str]
+
+
+class TargetsResponse(BaseModel):
+    targets: list[TargetSummary]
+    total: int
+
+
+class SnapshotResponse(BaseModel):
+    id: int
+    target: str
+    timestamp: str       # ISO 8601
+    ipv4_prefixes: list[str]
+    ipv6_prefixes: list[str]
+    ipv4_count: int
+    ipv6_count: int
+    sources: list[str]
+    content_hash: str
+
+
+class SnapshotHistoryResponse(BaseModel):
+    target: str
+    snapshots: list[SnapshotResponse]
+
+
+class DiffResponse(BaseModel):
+    id: int
+    target: str
+    timestamp: str       # ISO 8601
+    has_changes: bool
+    added_v4: list[str]
+    removed_v4: list[str]
+    added_v6: list[str]
+    removed_v6: list[str]
+    summary: str
+
+
+class DiffHistoryResponse(BaseModel):
+    target: str
+    diffs: list[DiffResponse]

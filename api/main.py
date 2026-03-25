@@ -5,17 +5,27 @@ import logging
 import time
 from contextlib import asynccontextmanager
 
-from fastapi import Depends, FastAPI, HTTPException
+from datetime import datetime
+
+from fastapi import Depends, FastAPI, HTTPException, Query
 from pydantic import ValidationError
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.bgpq4_client import BGPQ4Client
-from api.dependencies import get_bgpq4_client
+from app.store import SnapshotStore
+from app.diff import DiffResult
+from api.dependencies import get_bgpq4_client, get_db, verify_api_key
 from api.schemas import (
+    DiffHistoryResponse,
+    DiffResponse,
     ErrorResponse,
     FetchRequest,
     HealthResponse,
     PrefixResponse,
+    SnapshotHistoryResponse,
+    SnapshotResponse,
+    TargetSummary,
+    TargetsResponse,
 )
 from api.settings import settings
 
@@ -155,3 +165,138 @@ async def get_prefixes(
     except ValidationError as e:
         raise HTTPException(status_code=422, detail=str(e))
     return await _do_fetch(req.target, client)
+
+
+# ---------------------------------------------------------------------------
+# DB read endpoints (auth required)
+# ---------------------------------------------------------------------------
+
+def _fmt_ts(unix_ts: int) -> str:
+    return datetime.utcfromtimestamp(unix_ts).isoformat() + "Z"
+
+
+def _snapshot_to_response(s) -> SnapshotResponse:
+    return SnapshotResponse(
+        id=s.id,
+        target=s.target,
+        timestamp=_fmt_ts(s.timestamp),
+        ipv4_prefixes=sorted(s.ipv4_prefixes),
+        ipv6_prefixes=sorted(s.ipv6_prefixes),
+        ipv4_count=len(s.ipv4_prefixes),
+        ipv6_count=len(s.ipv6_prefixes),
+        sources=s.irr_sources,
+        content_hash=s.content_hash,
+    )
+
+
+def _diff_to_response(d) -> DiffResponse:
+    parts = []
+    if d.added_v4:
+        parts.append(f"{len(d.added_v4)} added IPv4")
+    if d.removed_v4:
+        parts.append(f"{len(d.removed_v4)} removed IPv4")
+    if d.added_v6:
+        parts.append(f"{len(d.added_v6)} added IPv6")
+    if d.removed_v6:
+        parts.append(f"{len(d.removed_v6)} removed IPv6")
+    summary = f"Detected {', '.join(parts)} prefixes for {d.target}" if parts else f"No changes for {d.target}"
+    return DiffResponse(
+        id=d.id,
+        target=d.target,
+        timestamp=_fmt_ts(d.created_at),
+        has_changes=d.has_changes,
+        added_v4=d.added_v4,
+        removed_v4=d.removed_v4,
+        added_v6=d.added_v6,
+        removed_v6=d.removed_v6,
+        summary=summary,
+    )
+
+
+@app.get(
+    "/api/v1/targets",
+    response_model=TargetsResponse,
+    tags=["Database"],
+    dependencies=[Depends(verify_api_key)],
+)
+def list_targets(db: SnapshotStore = Depends(get_db)):
+    """List all monitored targets with their latest snapshot summary."""
+    snapshots = db.get_all_targets()
+    summaries = [
+        TargetSummary(
+            target=s.target,
+            target_type=s.target_type,
+            ipv4_count=len(s.ipv4_prefixes),
+            ipv6_count=len(s.ipv6_prefixes),
+            last_snapshot=_fmt_ts(s.timestamp),
+            sources=s.irr_sources,
+        )
+        for s in snapshots
+    ]
+    return TargetsResponse(targets=summaries, total=len(summaries))
+
+
+@app.get(
+    "/api/v1/snapshots/{target}",
+    response_model=SnapshotResponse,
+    tags=["Database"],
+    dependencies=[Depends(verify_api_key)],
+)
+def get_latest_snapshot(target: str, db: SnapshotStore = Depends(get_db)):
+    """Get the latest prefix snapshot for a target."""
+    snapshot = db.get_latest_snapshot(target.upper())
+    if not snapshot:
+        raise HTTPException(status_code=404, detail=f"No snapshot found for {target.upper()}")
+    return _snapshot_to_response(snapshot)
+
+
+@app.get(
+    "/api/v1/snapshots/{target}/history",
+    response_model=SnapshotHistoryResponse,
+    tags=["Database"],
+    dependencies=[Depends(verify_api_key)],
+)
+def get_snapshot_history(
+    target: str,
+    limit: int = Query(default=10, ge=1, le=100),
+    db: SnapshotStore = Depends(get_db),
+):
+    """Get snapshot history for a target (newest first)."""
+    snapshots = db.get_snapshot_history(target.upper(), limit)
+    return SnapshotHistoryResponse(
+        target=target.upper(),
+        snapshots=[_snapshot_to_response(s) for s in snapshots],
+    )
+
+
+@app.get(
+    "/api/v1/diffs/{target}",
+    response_model=DiffResponse,
+    tags=["Database"],
+    dependencies=[Depends(verify_api_key)],
+)
+def get_latest_diff(target: str, db: SnapshotStore = Depends(get_db)):
+    """Get the latest diff for a target."""
+    diff = db.get_latest_diff(target.upper())
+    if not diff:
+        raise HTTPException(status_code=404, detail=f"No diff found for {target.upper()}")
+    return _diff_to_response(diff)
+
+
+@app.get(
+    "/api/v1/diffs/{target}/history",
+    response_model=DiffHistoryResponse,
+    tags=["Database"],
+    dependencies=[Depends(verify_api_key)],
+)
+def get_diff_history(
+    target: str,
+    limit: int = Query(default=10, ge=1, le=100),
+    db: SnapshotStore = Depends(get_db),
+):
+    """Get diff history for a target (newest first)."""
+    diffs = db.get_diff_history(target.upper(), limit)
+    return DiffHistoryResponse(
+        target=target.upper(),
+        diffs=[_diff_to_response(d) for d in diffs],
+    )

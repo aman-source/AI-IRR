@@ -288,6 +288,22 @@ class SnapshotStore:
         row = cursor.fetchone()
         return self._row_to_snapshot(row) if row else None
 
+    def get_all_targets(self) -> List[Snapshot]:
+        """Get the latest snapshot for every unique target."""
+        cursor = self.conn.execute(
+            """
+            SELECT s.*
+            FROM snapshots s
+            INNER JOIN (
+                SELECT target, MAX(timestamp) AS max_ts
+                FROM snapshots
+                GROUP BY target
+            ) latest ON s.target = latest.target AND s.timestamp = latest.max_ts
+            ORDER BY s.target ASC
+            """
+        )
+        return [self._row_to_snapshot(row) for row in cursor.fetchall()]
+
     def get_snapshot_history(self, target: str, limit: int = 10) -> List[Snapshot]:
         """
         Get snapshot history for a target.
@@ -415,6 +431,19 @@ class SnapshotStore:
         )
         row = cursor.fetchone()
         return self._row_to_diff(row) if row else None
+
+    def get_diff_history(self, target: str, limit: int = 10) -> List[Diff]:
+        """Get recent diffs for a target, newest first."""
+        cursor = self.conn.execute(
+            """
+            SELECT * FROM diffs
+            WHERE target = ?
+            ORDER BY created_at DESC
+            LIMIT ?
+            """,
+            (target, limit)
+        )
+        return [self._row_to_diff(row) for row in cursor.fetchall()]
 
     def get_latest_diff(self, target: str) -> Optional[Diff]:
         """Get the most recent diff for a target."""
