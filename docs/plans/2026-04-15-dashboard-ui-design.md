@@ -33,7 +33,7 @@ AI-IRR/
 
 ## Dashboard Pages
 
-Navigation is a left sidebar with tab buttons. `App.tsx` holds an `activePage` state and conditionally renders the active page — no React Router, no URL changes.
+Navigation is a left sidebar. `App.tsx` uses React Router v6 with `<Routes>` — each page has its own URL path under `/app/*`.
 
 | Page | Purpose |
 |---|---|
@@ -87,12 +87,13 @@ frontend/src/
 │   ├── useTargets.ts       ← SWR: /api/v1/targets
 │   ├── useDiffs.ts         ← SWR: /api/v1/diffs (paginated)
 │   └── useHealth.ts        ← polls /health every 30s
-└── App.tsx                 ← activePage state, renders active page
+└── App.tsx                 ← React Router v6 <Routes> setup
 ```
 
-**Data fetching:** SWR for all reads (auto-revalidation, loading/error states built-in).
+**Data fetching:** Plain `fetch` + `useEffect` with loading/error states. No SWR/React Query dependency.
 **Pagination:** Page size 25 for Diffs and Tickets tables.
 **Health indicator:** Sidebar header shows a green/red dot, polling `/health` every 30s.
+**Stack:** React 18, React Router v6, Tailwind CSS v3, Vite 5.
 
 ---
 
