@@ -571,3 +571,90 @@ class SnapshotStore:
             response_payload=json.loads(row['response_payload']) if row['response_payload'] else None,
             created_at=row['created_at'],
         )
+
+    # -------------------------------------------------------------------------
+    # Paginated list queries (for dashboard API)
+    # -------------------------------------------------------------------------
+
+    def list_snapshots(
+        self,
+        page: int = 1,
+        page_size: int = 25,
+        target: Optional[str] = None,
+    ) -> tuple[List[Snapshot], int]:
+        """Return a page of snapshots newest-first. Returns (items, total_count)."""
+        where = "WHERE target = ?" if target else ""
+        params_count = (target,) if target else ()
+        total = self.conn.execute(
+            f"SELECT COUNT(*) FROM snapshots {where}", params_count
+        ).fetchone()[0]
+        offset = (page - 1) * page_size
+        params = (*params_count, page_size, offset)
+        rows = self.conn.execute(
+            f"""SELECT * FROM snapshots {where}
+                ORDER BY timestamp DESC, id DESC LIMIT ? OFFSET ?""",
+            params,
+        ).fetchall()
+        return [self._row_to_snapshot(r) for r in rows], total
+
+    def list_diffs(
+        self,
+        page: int = 1,
+        page_size: int = 25,
+        target: Optional[str] = None,
+    ) -> tuple[List[Diff], int]:
+        """Return a page of diffs newest-first. Returns (items, total_count)."""
+        where = "WHERE target = ?" if target else ""
+        params_count = (target,) if target else ()
+        total = self.conn.execute(
+            f"SELECT COUNT(*) FROM diffs {where}", params_count
+        ).fetchone()[0]
+        offset = (page - 1) * page_size
+        params = (*params_count, page_size, offset)
+        rows = self.conn.execute(
+            f"""SELECT * FROM diffs {where}
+                ORDER BY created_at DESC LIMIT ? OFFSET ?""",
+            params,
+        ).fetchall()
+        return [self._row_to_diff(r) for r in rows], total
+
+    def list_tickets(
+        self,
+        page: int = 1,
+        page_size: int = 25,
+        target: Optional[str] = None,
+    ) -> tuple[List[Ticket], int]:
+        """Return a page of tickets newest-first. Returns (items, total_count)."""
+        where = "WHERE target = ?" if target else ""
+        params_count = (target,) if target else ()
+        total = self.conn.execute(
+            f"SELECT COUNT(*) FROM tickets {where}", params_count
+        ).fetchone()[0]
+        offset = (page - 1) * page_size
+        params = (*params_count, page_size, offset)
+        rows = self.conn.execute(
+            f"""SELECT * FROM tickets {where}
+                ORDER BY created_at DESC LIMIT ? OFFSET ?""",
+            params,
+        ).fetchall()
+        return [self._row_to_ticket(r) for r in rows], total
+
+    def count_open_tickets(self) -> int:
+        """Count tickets with status not in ('submitted', 'closed')."""
+        return self.conn.execute(
+            "SELECT COUNT(*) FROM tickets WHERE status NOT IN ('submitted', 'closed')"
+        ).fetchone()[0]
+
+    def get_latest_run_at(self) -> Optional[int]:
+        """Return the most recent snapshot timestamp across all targets."""
+        row = self.conn.execute(
+            "SELECT MAX(created_at) FROM snapshots"
+        ).fetchone()
+        return row[0] if row and row[0] else None
+
+    def count_recent_diffs(self, since_timestamp: int) -> int:
+        """Count diffs created after the given Unix timestamp."""
+        return self.conn.execute(
+            "SELECT COUNT(*) FROM diffs WHERE created_at >= ? AND has_changes = 1",
+            (since_timestamp,),
+        ).fetchone()[0]

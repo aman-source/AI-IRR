@@ -423,3 +423,45 @@ class TestTicketOperations:
         ticket = store.get_ticket_for_diff(diff_id)
         assert ticket is not None
         assert ticket.external_ticket_id == 'TKT-456'
+
+
+def test_list_snapshots_pagination(tmp_path):
+    store = SnapshotStore(str(tmp_path / "test.db"))
+    store.migrate()
+    for i in range(7):
+        store.save_snapshot("AS100", "asn", ["RADB"], [f"10.0.{i}.0/24"], [])
+    items, total = store.list_snapshots(page=1, page_size=5)
+    assert total == 7
+    assert len(items) == 5
+    items2, _ = store.list_snapshots(page=2, page_size=5)
+    assert len(items2) == 2
+
+def test_list_snapshots_filtered_by_target(tmp_path):
+    store = SnapshotStore(str(tmp_path / "test.db"))
+    store.migrate()
+    store.save_snapshot("AS100", "asn", ["RADB"], ["10.0.0.0/24"], [])
+    store.save_snapshot("AS200", "asn", ["RADB"], ["10.1.0.0/24"], [])
+    items, total = store.list_snapshots(target="AS100")
+    assert total == 1
+    assert items[0].target == "AS100"
+
+def test_list_diffs_pagination(tmp_path):
+    store = SnapshotStore(str(tmp_path / "test.db"))
+    store.migrate()
+    for i in range(6):
+        sid = store.save_snapshot("AS100", "asn", ["RADB"], [f"10.0.{i}.0/24"], [])
+        store.save_diff(sid, None, "AS100", [f"10.0.{i}.0/24"], [], [], [], f"hash{i}")
+    items, total = store.list_diffs(page=1, page_size=4)
+    assert total == 6
+    assert len(items) == 4
+
+def test_list_tickets_pagination(tmp_path):
+    store = SnapshotStore(str(tmp_path / "test.db"))
+    store.migrate()
+    sid = store.save_snapshot("AS100", "asn", ["RADB"], ["10.0.0.0/24"], [])
+    diff_id = store.save_diff(sid, None, "AS100", [], [], [], [], "hash0")
+    for i in range(3):
+        store.save_ticket(diff_id, "AS100", "submitted", {"req": i}, external_ticket_id=f"TKT-{i}")
+    items, total = store.list_tickets(page=1, page_size=2)
+    assert total == 3
+    assert len(items) == 2
