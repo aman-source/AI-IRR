@@ -10,6 +10,7 @@ from pydantic import ValidationError
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.bgpq4_client import BGPQ4Client
+from app.store import SnapshotStore
 from api.dependencies import get_bgpq4_client
 from api.schemas import (
     ErrorResponse,
@@ -49,8 +50,13 @@ async def lifespan(app: FastAPI):
         sources=settings.bgpq4_sources_list,
         aggregate=settings.bgpq4_aggregate,
     )
+    db_path = getattr(settings, "db_path", "./data/irr.sqlite")
+    store = SnapshotStore(db_path)
+    store.migrate()
+    app.state.store = store
     logging.getLogger("app").info("IRR Prefix Lookup API started (BGPQ4)")
     yield
+    store.close()
     app.state.bgpq4_client.close()
     logging.getLogger("app").info("IRR Prefix Lookup API stopped")
 

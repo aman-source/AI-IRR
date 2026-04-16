@@ -1,7 +1,7 @@
 """Tests for the FastAPI application."""
 
 import pytest
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 from fastapi.testclient import TestClient
 
 from api.main import app
@@ -203,3 +203,26 @@ class TestTargetValidation:
                 json={"target": target}
             )
             assert response.status_code == 422, f"Target {target} should have been rejected"
+
+
+@pytest.fixture
+def test_client():
+    """Create a TestClient that triggers the lifespan (store initialised via :memory: DB)."""
+    with patch("api.main.settings") as mock_settings:
+        # Provide all settings attributes used during lifespan
+        mock_settings.bgpq4_cmd_list = ["echo"]
+        mock_settings.bgpq4_timeout = 10
+        mock_settings.bgpq4_sources_list = ["RADB"]
+        mock_settings.bgpq4_aggregate = True
+        mock_settings.log_level = "INFO"
+        mock_settings.cors_origins = "*"
+        mock_settings.db_path = ":memory:"
+        with TestClient(app) as tc:
+            yield tc
+
+
+def test_store_available_in_app_state(test_client):
+    """app.state.store is a live SnapshotStore after startup."""
+    from app.store import SnapshotStore
+    assert hasattr(test_client.app.state, "store")
+    assert isinstance(test_client.app.state.store, SnapshotStore)
