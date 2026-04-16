@@ -1,9 +1,10 @@
 """Pydantic request/response models for the IRR Prefix Lookup API."""
 
+import math
 import re
 from typing import Generic, List, Optional, TypeVar
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, computed_field, field_validator
 
 T = TypeVar("T")
 
@@ -57,19 +58,29 @@ class SnapshotOut(BaseModel):
     target_type: str
     timestamp: int
     irr_sources: List[str]
-    ipv4_count: int
-    ipv6_count: int
+    ipv4_prefixes: List[str]
+    ipv6_prefixes: List[str]
     content_hash: str
     created_at: int
 
     model_config = ConfigDict(from_attributes=True)
+
+    @computed_field
+    @property
+    def ipv4_count(self) -> int:
+        return len(self.ipv4_prefixes)
+
+    @computed_field
+    @property
+    def ipv6_count(self) -> int:
+        return len(self.ipv6_prefixes)
 
 
 class DiffOut(BaseModel):
     id: int
     target: str
     new_snapshot_id: int
-    old_snapshot_id: Optional[int]
+    old_snapshot_id: Optional[int] = None
     added_v4: List[str]
     removed_v4: List[str]
     added_v6: List[str]
@@ -85,7 +96,9 @@ class TicketOut(BaseModel):
     id: int
     target: str
     diff_id: int
-    external_ticket_id: Optional[str]
+    external_ticket_id: Optional[str] = None
+    # Note: request_payload and response_payload are intentionally excluded
+    # from the API surface — they may contain sensitive integration data.
     status: str
     created_at: int
 
@@ -97,18 +110,30 @@ class PaginatedResponse(BaseModel, Generic[T]):
     total: int
     page: int
     page_size: int
-    pages: int  # ceil(total / page_size)
+
+    @computed_field
+    @property
+    def pages(self) -> int:
+        return math.ceil(self.total / self.page_size) if self.page_size > 0 else 0
 
 
 class OverviewStats(BaseModel):
     total_targets: int
-    last_run_at: Optional[int]   # Unix timestamp or None
+    last_run_at: Optional[int] = None  # Unix timestamp or None
     recent_diffs: int            # diffs in last 24h with has_changes=True
     open_tickets: int
 
 
 class AddTargetRequest(BaseModel):
-    target: str = Field(..., pattern=r'^(AS\d+|AS-[A-Z0-9_:-]+)$', description="ASN (AS12345) or AS-SET (AS-FOO)")
+    target: str = Field(..., description="ASN (AS12345) or AS-SET (AS-FOO)")
+
+    @field_validator("target")
+    @classmethod
+    def validate_target(cls, v: str) -> str:
+        v = v.strip().upper()
+        if not re.match(r"^AS(\d+|-[A-Z0-9][-A-Z0-9:]*)$", v):
+            raise ValueError("target must be an ASN (AS12345) or AS-SET (AS-FOO:BAR)")
+        return v
 
 
 class RunResult(BaseModel):
