@@ -613,7 +613,7 @@ class SnapshotStore:
         params = (*params_count, page_size, offset)
         rows = self.conn.execute(
             f"""SELECT * FROM diffs {where}
-                ORDER BY created_at DESC LIMIT ? OFFSET ?""",
+                ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?""",
             params,
         ).fetchall()
         return [self._row_to_diff(r) for r in rows], total
@@ -634,7 +634,7 @@ class SnapshotStore:
         params = (*params_count, page_size, offset)
         rows = self.conn.execute(
             f"""SELECT * FROM tickets {where}
-                ORDER BY created_at DESC LIMIT ? OFFSET ?""",
+                ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?""",
             params,
         ).fetchall()
         return [self._row_to_ticket(r) for r in rows], total
@@ -645,10 +645,17 @@ class SnapshotStore:
             "SELECT COUNT(*) FROM tickets WHERE status NOT IN ('submitted', 'closed')"
         ).fetchone()[0]
 
+    def get_unique_targets(self) -> List[str]:
+        """Return sorted list of unique targets that have snapshots."""
+        rows = self.conn.execute(
+            "SELECT DISTINCT target FROM snapshots ORDER BY target ASC"
+        ).fetchall()
+        return [r[0] for r in rows]
+
     def get_latest_run_at(self) -> Optional[int]:
         """Return the most recent snapshot timestamp across all targets."""
         row = self.conn.execute(
-            "SELECT MAX(created_at) FROM snapshots"
+            "SELECT MAX(timestamp) FROM snapshots"
         ).fetchone()
         return row[0] if row and row[0] else None
 

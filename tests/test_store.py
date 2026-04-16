@@ -465,3 +465,41 @@ def test_list_tickets_pagination(tmp_path):
     items, total = store.list_tickets(page=1, page_size=2)
     assert total == 3
     assert len(items) == 2
+
+
+def test_get_unique_targets(tmp_path):
+    store = SnapshotStore(str(tmp_path / "test.db"))
+    store.migrate()
+    store.save_snapshot("AS200", "asn", ["RADB"], ["10.0.0.0/24"], [])
+    store.save_snapshot("AS100", "asn", ["RADB"], ["10.1.0.0/24"], [])
+    store.save_snapshot("AS100", "asn", ["RADB"], ["10.1.0.0/24"], [])  # duplicate
+    targets = store.get_unique_targets()
+    assert targets == ["AS100", "AS200"]  # sorted, no duplicates
+
+
+def test_list_snapshots_empty(tmp_path):
+    store = SnapshotStore(str(tmp_path / "test.db"))
+    store.migrate()
+    items, total = store.list_snapshots()
+    assert items == []
+    assert total == 0
+
+
+def test_count_open_tickets(tmp_path):
+    store = SnapshotStore(str(tmp_path / "test.db"))
+    store.migrate()
+    sid = store.save_snapshot("AS100", "asn", ["RADB"], ["10.0.0.0/24"], [])
+    diff_id = store.save_diff(sid, None, "AS100", [], [], [], [], "hash0")
+    store.save_ticket(diff_id, "AS100", "pending", {})
+    store.save_ticket(diff_id, "AS100", "submitted", {})
+    store.save_ticket(diff_id, "AS100", "closed", {})
+    assert store.count_open_tickets() == 1  # only "pending" is open
+
+
+def test_count_recent_diffs(tmp_path):
+    store = SnapshotStore(str(tmp_path / "test.db"))
+    store.migrate()
+    sid = store.save_snapshot("AS100", "asn", ["RADB"], ["10.0.0.0/24"], [])
+    store.save_diff(sid, None, "AS100", ["10.0.0.0/24"], [], [], [], "hash1")
+    assert store.count_recent_diffs(0) == 1
+    assert store.count_recent_diffs(int(time.time()) + 9999) == 0
