@@ -1,12 +1,19 @@
-function App() {
-  return (
-    <div className="min-h-screen bg-gray-50 flex items-center justify-center">
-      <div className="text-center">
-        <h1 className="text-3xl font-bold text-gray-900">AI-IRR Dashboard</h1>
-        <p className="mt-2 text-gray-500">BGP Prefix Monitoring</p>
-      </div>
-    </div>
-  )
-}
+import { BrowserRouter, Routes, Route } from 'react-router-dom';
+import Layout from './components/Layout';
+import PlaceholderPage from './pages/PlaceholderPage';
 
-export default App
+export default function App() {
+  return (
+    <BrowserRouter>
+      <Routes>
+        <Route path="/" element={<Layout />}>
+          <Route index element={<PlaceholderPage title="Overview" />} />
+          <Route path="targets" element={<PlaceholderPage title="Targets" />} />
+          <Route path="prefixes" element={<PlaceholderPage title="Prefixes" />} />
+          <Route path="diffs" element={<PlaceholderPage title="Diffs" />} />
+          <Route path="tickets" element={<PlaceholderPage title="Tickets" />} />
+        </Route>
+      </Routes>
+    </BrowserRouter>
+  );
+}
