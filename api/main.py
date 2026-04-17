@@ -2,8 +2,10 @@
 
 import asyncio
 import logging
+import re
 import time
 from contextlib import asynccontextmanager
+from typing import List
 
 from fastapi import Depends, FastAPI, HTTPException
 from pydantic import ValidationError
@@ -11,12 +13,14 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.bgpq4_client import BGPQ4Client
 from app.store import SnapshotStore
-from api.dependencies import get_bgpq4_client
+from api.dependencies import get_bgpq4_client, get_store
 from api.schemas import (
     ErrorResponse,
     FetchRequest,
     HealthResponse,
+    OverviewStats,
     PrefixResponse,
+    RunResult,
 )
 from api.settings import settings
 
@@ -161,3 +165,108 @@ async def get_prefixes(
     except ValidationError as e:
         raise HTTPException(status_code=422, detail=str(e))
     return await _do_fetch(req.target, client)
+
+
+# ---------------------------------------------------------------------------
+# Target management endpoints
+# ---------------------------------------------------------------------------
+
+@app.get(
+    "/api/v1/targets",
+    response_model=List[str],
+    tags=["Targets"],
+)
+async def list_targets(store: SnapshotStore = Depends(get_store)):
+    """Return all tracked targets (those with at least one stored snapshot)."""
+    return store.get_unique_targets()
+
+
+@app.get(
+    "/api/v1/overview",
+    response_model=OverviewStats,
+    tags=["Targets"],
+)
+async def get_overview(store: SnapshotStore = Depends(get_store)):
+    """Return dashboard summary statistics."""
+    since = int(time.time()) - 86400  # last 24 hours
+    targets = store.get_unique_targets()
+    return OverviewStats(
+        total_targets=len(targets),
+        last_run_at=store.get_latest_run_at(),
+        recent_diffs=store.count_recent_diffs(since),
+        open_tickets=store.count_open_tickets(),
+    )
+
+
+@app.post(
+    "/api/v1/run",
+    response_model=RunResult,
+    tags=["Targets"],
+)
+async def trigger_run(
+    bgpq4_client: BGPQ4Client = Depends(get_bgpq4_client),
+    store: SnapshotStore = Depends(get_store),
+):
+    """Trigger a fetch+diff run for all configured targets."""
+    from app.config import load_config
+    from app.diff import compute_diff
+
+    try:
+        config = load_config("./config.yaml")
+    except FileNotFoundError:
+        raise HTTPException(status_code=503, detail="config.yaml not found")
+
+    targets_processed = 0
+    diffs_found = 0
+    tickets_created = 0
+    errors: List[str] = []
+
+    for target in config.targets:
+        try:
+            fetch_result = await asyncio.to_thread(bgpq4_client.fetch_prefixes, target)
+
+            if fetch_result.errors and not fetch_result.ipv4_prefixes and not fetch_result.ipv6_prefixes:
+                errors.append(f"{target}: fetch failed — {fetch_result.errors}")
+                continue
+
+            target_type = "asn" if re.match(r"^AS\d+$", target) else "as-set"
+            lookback_seconds = config.diff.lookback_hours * 3600
+            current_time = int(time.time())
+            cutoff_time = current_time - lookback_seconds
+            previous = store.get_snapshot_before(target, cutoff_time)
+
+            snapshot_id = store.save_snapshot(
+                target=target,
+                target_type=target_type,
+                irr_sources=list(fetch_result.sources_queried),
+                ipv4_prefixes=list(fetch_result.ipv4_prefixes),
+                ipv6_prefixes=list(fetch_result.ipv6_prefixes),
+            )
+            snapshot = store.get_snapshot_by_id(snapshot_id)
+
+            diff = compute_diff(snapshot, previous)
+
+            store.save_diff(
+                new_snapshot_id=snapshot_id,
+                old_snapshot_id=previous.id if previous else None,
+                target=target,
+                added_v4=diff.added_v4,
+                removed_v4=diff.removed_v4,
+                added_v6=diff.added_v6,
+                removed_v6=diff.removed_v6,
+                diff_hash=diff.diff_hash,
+            )
+
+            if diff.has_changes:
+                diffs_found += 1
+
+            targets_processed += 1
+        except Exception as exc:
+            errors.append(f"{target}: {exc}")
+
+    return RunResult(
+        targets_processed=targets_processed,
+        diffs_found=diffs_found,
+        tickets_created=tickets_created,
+        errors=errors,
+    )
