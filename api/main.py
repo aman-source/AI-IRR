@@ -5,9 +5,9 @@ import logging
 import re
 import time
 from contextlib import asynccontextmanager
-from typing import List
+from typing import List, Optional
 
-from fastapi import Depends, FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException, Query
 from pydantic import ValidationError
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -17,12 +17,16 @@ from app.diff import compute_diff
 from app.store import SnapshotStore
 from api.dependencies import get_bgpq4_client, get_store
 from api.schemas import (
+    DiffOut,
     ErrorResponse,
     FetchRequest,
     HealthResponse,
     OverviewStats,
+    PaginatedResponse,
     PrefixResponse,
     RunResult,
+    SnapshotOut,
+    TicketOut,
 )
 from api.settings import settings
 
@@ -266,4 +270,59 @@ async def trigger_run(
         diffs_found=diffs_found,
         tickets_created=tickets_created,
         errors=errors,
+    )
+
+
+# ---------------------------------------------------------------------------
+# History endpoints
+# ---------------------------------------------------------------------------
+
+@app.get("/api/v1/snapshots", response_model=PaginatedResponse[SnapshotOut], tags=["History"])
+async def list_snapshots(
+    page: int = Query(1, ge=1),
+    page_size: int = Query(25, ge=1, le=100),
+    target: Optional[str] = Query(None),
+    store: SnapshotStore = Depends(get_store),
+):
+    """Paginated snapshot history, optionally filtered by target."""
+    items, total = store.list_snapshots(page=page, page_size=page_size, target=target)
+    return PaginatedResponse[SnapshotOut](
+        items=[SnapshotOut.model_validate(s) for s in items],
+        total=total,
+        page=page,
+        page_size=page_size,
+    )
+
+
+@app.get("/api/v1/diffs", response_model=PaginatedResponse[DiffOut], tags=["History"])
+async def list_diffs(
+    page: int = Query(1, ge=1),
+    page_size: int = Query(25, ge=1, le=100),
+    target: Optional[str] = Query(None),
+    store: SnapshotStore = Depends(get_store),
+):
+    """Paginated diff history, optionally filtered by target."""
+    items, total = store.list_diffs(page=page, page_size=page_size, target=target)
+    return PaginatedResponse[DiffOut](
+        items=[DiffOut.model_validate(d) for d in items],
+        total=total,
+        page=page,
+        page_size=page_size,
+    )
+
+
+@app.get("/api/v1/tickets", response_model=PaginatedResponse[TicketOut], tags=["History"])
+async def list_tickets(
+    page: int = Query(1, ge=1),
+    page_size: int = Query(25, ge=1, le=100),
+    target: Optional[str] = Query(None),
+    store: SnapshotStore = Depends(get_store),
+):
+    """Paginated ticket history, optionally filtered by target."""
+    items, total = store.list_tickets(page=page, page_size=page_size, target=target)
+    return PaginatedResponse[TicketOut](
+        items=[TicketOut.model_validate(t) for t in items],
+        total=total,
+        page=page,
+        page_size=page_size,
     )

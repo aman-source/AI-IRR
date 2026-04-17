@@ -264,3 +264,49 @@ def test_get_overview_schema_types(test_client):
     assert data["last_run_at"] is None or isinstance(data["last_run_at"], int)
     assert isinstance(data["recent_diffs"], int)
     assert isinstance(data["open_tickets"], int)
+
+
+# ---------------------------------------------------------------------------
+# Paginated history endpoint tests
+# ---------------------------------------------------------------------------
+
+def test_list_snapshots_empty(test_client):
+    response = test_client.get("/api/v1/snapshots")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["total"] == 0
+    assert data["items"] == []
+    assert data["page"] == 1
+    assert data["page_size"] == 25
+    assert data["pages"] == 0
+
+
+def test_list_diffs_empty(test_client):
+    response = test_client.get("/api/v1/diffs")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["total"] == 0
+    assert data["items"] == []
+
+
+def test_list_tickets_empty(test_client):
+    response = test_client.get("/api/v1/tickets")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["total"] == 0
+    assert data["items"] == []
+
+
+def test_list_snapshots_pagination_params(test_client):
+    """Verify pagination query params are accepted."""
+    response = test_client.get("/api/v1/snapshots?page=2&page_size=10")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["page"] == 2
+    assert data["page_size"] == 10
+
+
+def test_list_snapshots_invalid_page(test_client):
+    """page must be >= 1."""
+    response = test_client.get("/api/v1/snapshots?page=0")
+    assert response.status_code == 422
