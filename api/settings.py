@@ -10,6 +10,7 @@ class Settings(BaseSettings):
     bgpq4_aggregate: bool = True
     log_level: str = "INFO"
     cors_origins: str = "*"
+    db_path: str = "./data/irr.sqlite"
 
     model_config = {"env_prefix": "IRR_API_"}
 

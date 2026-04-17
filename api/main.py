@@ -39,7 +39,7 @@ def _setup_logging() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Application lifespan — create / destroy the shared BGPQ4Client
+# Application lifespan — create / destroy the shared BGPQ4Client and SnapshotStore
 # ---------------------------------------------------------------------------
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -50,7 +50,7 @@ async def lifespan(app: FastAPI):
         sources=settings.bgpq4_sources_list,
         aggregate=settings.bgpq4_aggregate,
     )
-    db_path = getattr(settings, "db_path", "./data/irr.sqlite")
+    db_path = settings.db_path
     store = SnapshotStore(db_path)
     store.migrate()
     app.state.store = store

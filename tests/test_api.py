@@ -6,6 +6,7 @@ from fastapi.testclient import TestClient
 
 from api.main import app
 from app.bgpq4_client import PrefixResult
+from app.store import SnapshotStore
 
 
 @pytest.fixture
@@ -223,6 +224,5 @@ def test_client():
 
 def test_store_available_in_app_state(test_client):
     """app.state.store is a live SnapshotStore after startup."""
-    from app.store import SnapshotStore
     assert hasattr(test_client.app.state, "store")
     assert isinstance(test_client.app.state.store, SnapshotStore)
