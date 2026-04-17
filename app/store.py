@@ -100,6 +100,8 @@ CREATE TABLE IF NOT EXISTS tickets (
 CREATE INDEX IF NOT EXISTS idx_snapshots_target_ts ON snapshots(target, timestamp DESC);
 CREATE INDEX IF NOT EXISTS idx_diffs_hash ON diffs(diff_hash);
 CREATE INDEX IF NOT EXISTS idx_tickets_diff ON tickets(diff_id);
+CREATE INDEX IF NOT EXISTS idx_diffs_target_created ON diffs(target, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_tickets_target_created ON tickets(target, created_at DESC);
 """
 
 
