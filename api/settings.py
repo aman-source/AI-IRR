@@ -11,6 +11,7 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
     cors_origins: str = "*"
     db_path: str = "./data/irr.sqlite"
+    config_path: str = "./config.yaml"
 
     model_config = {"env_prefix": "IRR_API_"}
 

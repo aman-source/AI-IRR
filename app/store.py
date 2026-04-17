@@ -652,6 +652,12 @@ class SnapshotStore:
         ).fetchall()
         return [r[0] for r in rows]
 
+    def count_unique_targets(self) -> int:
+        """Return count of distinct targets in snapshots."""
+        return self.conn.execute(
+            "SELECT COUNT(DISTINCT target) FROM snapshots"
+        ).fetchone()[0]
+
     def get_latest_run_at(self) -> Optional[int]:
         """Return the most recent snapshot timestamp across all targets."""
         row = self.conn.execute(

@@ -12,6 +12,8 @@ from pydantic import ValidationError
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.bgpq4_client import BGPQ4Client
+from app.config import load_config
+from app.diff import compute_diff
 from app.store import SnapshotStore
 from api.dependencies import get_bgpq4_client, get_store
 from api.schemas import (
@@ -184,14 +186,13 @@ async def list_targets(store: SnapshotStore = Depends(get_store)):
 @app.get(
     "/api/v1/overview",
     response_model=OverviewStats,
-    tags=["Targets"],
+    tags=["Dashboard"],
 )
 async def get_overview(store: SnapshotStore = Depends(get_store)):
     """Return dashboard summary statistics."""
     since = int(time.time()) - 86400  # last 24 hours
-    targets = store.get_unique_targets()
     return OverviewStats(
-        total_targets=len(targets),
+        total_targets=store.count_unique_targets(),
         last_run_at=store.get_latest_run_at(),
         recent_diffs=store.count_recent_diffs(since),
         open_tickets=store.count_open_tickets(),
@@ -201,24 +202,21 @@ async def get_overview(store: SnapshotStore = Depends(get_store)):
 @app.post(
     "/api/v1/run",
     response_model=RunResult,
-    tags=["Targets"],
+    tags=["Dashboard"],
 )
 async def trigger_run(
     bgpq4_client: BGPQ4Client = Depends(get_bgpq4_client),
     store: SnapshotStore = Depends(get_store),
 ):
     """Trigger a fetch+diff run for all configured targets."""
-    from app.config import load_config
-    from app.diff import compute_diff
-
     try:
-        config = load_config("./config.yaml")
+        config = load_config(settings.config_path)
     except FileNotFoundError:
         raise HTTPException(status_code=503, detail="config.yaml not found")
 
     targets_processed = 0
     diffs_found = 0
-    tickets_created = 0
+    tickets_created = 0  # ticket creation not yet implemented via API
     errors: List[str] = []
 
     for target in config.targets:
@@ -246,18 +244,17 @@ async def trigger_run(
 
             diff = compute_diff(snapshot, previous)
 
-            store.save_diff(
-                new_snapshot_id=snapshot_id,
-                old_snapshot_id=previous.id if previous else None,
-                target=target,
-                added_v4=diff.added_v4,
-                removed_v4=diff.removed_v4,
-                added_v6=diff.added_v6,
-                removed_v6=diff.removed_v6,
-                diff_hash=diff.diff_hash,
-            )
-
-            if diff.has_changes:
+            if diff and diff.has_changes:
+                store.save_diff(
+                    new_snapshot_id=snapshot_id,
+                    old_snapshot_id=previous.id if previous else None,
+                    target=target,
+                    added_v4=diff.added_v4,
+                    removed_v4=diff.removed_v4,
+                    added_v6=diff.added_v6,
+                    removed_v6=diff.removed_v6,
+                    diff_hash=diff.diff_hash,
+                )
                 diffs_found += 1
 
             targets_processed += 1
