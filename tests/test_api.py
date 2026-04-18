@@ -1,11 +1,12 @@
 """Tests for the FastAPI application."""
 
 import pytest
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 from fastapi.testclient import TestClient
 
 from api.main import app
 from app.bgpq4_client import PrefixResult
+from app.store import SnapshotStore
 
 
 @pytest.fixture
@@ -203,3 +204,109 @@ class TestTargetValidation:
                 json={"target": target}
             )
             assert response.status_code == 422, f"Target {target} should have been rejected"
+
+
+@pytest.fixture
+def test_client():
+    """Create a TestClient that triggers the lifespan (store initialised via :memory: DB)."""
+    with patch("api.main.settings") as mock_settings:
+        # Provide all settings attributes used during lifespan
+        mock_settings.bgpq4_cmd_list = ["echo"]
+        mock_settings.bgpq4_timeout = 10
+        mock_settings.bgpq4_sources_list = ["RADB"]
+        mock_settings.bgpq4_aggregate = True
+        mock_settings.log_level = "INFO"
+        mock_settings.cors_origins = "*"
+        mock_settings.db_path = ":memory:"
+        with TestClient(app) as tc:
+            yield tc
+
+
+def test_store_available_in_app_state(test_client):
+    """app.state.store is a live SnapshotStore after startup."""
+    assert hasattr(test_client.app.state, "store")
+    assert isinstance(test_client.app.state.store, SnapshotStore)
+
+
+# ---------------------------------------------------------------------------
+# Target management endpoint tests
+# ---------------------------------------------------------------------------
+
+def test_list_targets_empty(test_client):
+    """GET /api/v1/targets returns an empty list when no snapshots exist."""
+    response = test_client.get("/api/v1/targets")
+    assert response.status_code == 200
+    assert response.json() == []
+
+
+
+def test_get_overview_empty(test_client):
+    """GET /api/v1/overview returns correct schema on an empty store."""
+    response = test_client.get("/api/v1/overview")
+    assert response.status_code == 200
+    data = response.json()
+    assert "total_targets" in data
+    assert "last_run_at" in data
+    assert "recent_diffs" in data
+    assert "open_tickets" in data
+    assert data["total_targets"] == 0
+    assert data["last_run_at"] is None
+    assert data["recent_diffs"] == 0
+    assert data["open_tickets"] == 0
+
+
+def test_get_overview_schema_types(test_client):
+    """GET /api/v1/overview returns correct field types even on an empty store."""
+    response = test_client.get("/api/v1/overview")
+    assert response.status_code == 200
+    data = response.json()
+    assert isinstance(data["total_targets"], int)
+    assert data["last_run_at"] is None or isinstance(data["last_run_at"], int)
+    assert isinstance(data["recent_diffs"], int)
+    assert isinstance(data["open_tickets"], int)
+
+
+# ---------------------------------------------------------------------------
+# Paginated history endpoint tests
+# ---------------------------------------------------------------------------
+
+def test_list_snapshots_empty(test_client):
+    response = test_client.get("/api/v1/snapshots")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["total"] == 0
+    assert data["items"] == []
+    assert data["page"] == 1
+    assert data["page_size"] == 25
+    assert data["pages"] == 0
+
+
+def test_list_diffs_empty(test_client):
+    response = test_client.get("/api/v1/diffs")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["total"] == 0
+    assert data["items"] == []
+
+
+def test_list_tickets_empty(test_client):
+    response = test_client.get("/api/v1/tickets")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["total"] == 0
+    assert data["items"] == []
+
+
+def test_list_snapshots_pagination_params(test_client):
+    """Verify pagination query params are accepted."""
+    response = test_client.get("/api/v1/snapshots?page=2&page_size=10")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["page"] == 2
+    assert data["page_size"] == 10
+
+
+def test_list_snapshots_invalid_page(test_client):
+    """page must be >= 1."""
+    response = test_client.get("/api/v1/snapshots?page=0")
+    assert response.status_code == 422

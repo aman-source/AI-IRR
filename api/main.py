@@ -2,20 +2,35 @@
 
 import asyncio
 import logging
+import re
 import time
 from contextlib import asynccontextmanager
+from typing import List, Optional
 
-from fastapi import Depends, FastAPI, HTTPException
-from pydantic import ValidationError
+from pathlib import Path
+
+from fastapi import Depends, FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
+from pydantic import ValidationError
 
 from app.bgpq4_client import BGPQ4Client
-from api.dependencies import get_bgpq4_client
+from app.config import load_config
+from app.diff import compute_diff
+from app.store import SnapshotStore
+from api.dependencies import get_bgpq4_client, get_store
 from api.schemas import (
+    DiffOut,
     ErrorResponse,
     FetchRequest,
     HealthResponse,
+    OverviewStats,
+    PaginatedResponse,
     PrefixResponse,
+    RunResult,
+    SnapshotOut,
+    TicketOut,
 )
 from api.settings import settings
 
@@ -38,7 +53,7 @@ def _setup_logging() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Application lifespan — create / destroy the shared BGPQ4Client
+# Application lifespan — create / destroy the shared BGPQ4Client and SnapshotStore
 # ---------------------------------------------------------------------------
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -49,8 +64,13 @@ async def lifespan(app: FastAPI):
         sources=settings.bgpq4_sources_list,
         aggregate=settings.bgpq4_aggregate,
     )
+    db_path = settings.db_path
+    store = SnapshotStore(db_path)
+    store.migrate()
+    app.state.store = store
     logging.getLogger("app").info("IRR Prefix Lookup API started (BGPQ4)")
     yield
+    store.close()
     app.state.bgpq4_client.close()
     logging.getLogger("app").info("IRR Prefix Lookup API stopped")
 
@@ -155,3 +175,190 @@ async def get_prefixes(
     except ValidationError as e:
         raise HTTPException(status_code=422, detail=str(e))
     return await _do_fetch(req.target, client)
+
+
+# ---------------------------------------------------------------------------
+# Target management endpoints
+# ---------------------------------------------------------------------------
+
+@app.get(
+    "/api/v1/targets",
+    response_model=List[str],
+    tags=["Targets"],
+)
+async def list_targets(store: SnapshotStore = Depends(get_store)):
+    """Return all tracked targets (those with at least one stored snapshot)."""
+    return store.get_unique_targets()
+
+
+@app.get(
+    "/api/v1/overview",
+    response_model=OverviewStats,
+    tags=["Dashboard"],
+)
+async def get_overview(store: SnapshotStore = Depends(get_store)):
+    """Return dashboard summary statistics."""
+    since = int(time.time()) - 86400  # last 24 hours
+    return OverviewStats(
+        total_targets=store.count_unique_targets(),
+        last_run_at=store.get_latest_run_at(),
+        recent_diffs=store.count_recent_diffs(since),
+        open_tickets=store.count_open_tickets(),
+    )
+
+
+@app.post(
+    "/api/v1/run",
+    response_model=RunResult,
+    tags=["Dashboard"],
+)
+async def trigger_run(
+    bgpq4_client: BGPQ4Client = Depends(get_bgpq4_client),
+    store: SnapshotStore = Depends(get_store),
+):
+    """Trigger a fetch+diff run for all configured targets."""
+    try:
+        config = load_config(settings.config_path)
+    except FileNotFoundError:
+        raise HTTPException(status_code=503, detail="config.yaml not found")
+
+    targets_processed = 0
+    diffs_found = 0
+    tickets_created = 0  # ticket creation not yet implemented via API
+    errors: List[str] = []
+
+    for target in config.targets:
+        try:
+            fetch_result = await asyncio.to_thread(bgpq4_client.fetch_prefixes, target)
+
+            if fetch_result.errors and not fetch_result.ipv4_prefixes and not fetch_result.ipv6_prefixes:
+                errors.append(f"{target}: fetch failed — {fetch_result.errors}")
+                continue
+
+            target_type = "asn" if re.match(r"^AS\d+$", target) else "as-set"
+            lookback_seconds = config.diff.lookback_hours * 3600
+            current_time = int(time.time())
+            cutoff_time = current_time - lookback_seconds
+            previous = store.get_snapshot_before(target, cutoff_time)
+
+            snapshot_id = store.save_snapshot(
+                target=target,
+                target_type=target_type,
+                irr_sources=list(fetch_result.sources_queried),
+                ipv4_prefixes=list(fetch_result.ipv4_prefixes),
+                ipv6_prefixes=list(fetch_result.ipv6_prefixes),
+            )
+            snapshot = store.get_snapshot_by_id(snapshot_id)
+
+            diff = compute_diff(snapshot, previous)
+
+            if diff and diff.has_changes:
+                store.save_diff(
+                    new_snapshot_id=snapshot_id,
+                    old_snapshot_id=previous.id if previous else None,
+                    target=target,
+                    added_v4=diff.added_v4,
+                    removed_v4=diff.removed_v4,
+                    added_v6=diff.added_v6,
+                    removed_v6=diff.removed_v6,
+                    diff_hash=diff.diff_hash,
+                )
+                diffs_found += 1
+
+            targets_processed += 1
+        except Exception as exc:
+            errors.append(f"{target}: {exc}")
+
+    return RunResult(
+        targets_processed=targets_processed,
+        diffs_found=diffs_found,
+        tickets_created=tickets_created,
+        errors=errors,
+    )
+
+
+# ---------------------------------------------------------------------------
+# History endpoints
+# ---------------------------------------------------------------------------
+
+@app.get("/api/v1/snapshots", response_model=PaginatedResponse[SnapshotOut], tags=["History"])
+async def list_snapshots(
+    page: int = Query(1, ge=1),
+    page_size: int = Query(25, ge=1, le=100),
+    target: Optional[str] = Query(None),
+    store: SnapshotStore = Depends(get_store),
+):
+    """Paginated snapshot history, optionally filtered by target."""
+    items, total = store.list_snapshots(page=page, page_size=page_size, target=target)
+    return PaginatedResponse[SnapshotOut](
+        items=[SnapshotOut.model_validate(s) for s in items],
+        total=total,
+        page=page,
+        page_size=page_size,
+    )
+
+
+@app.get("/api/v1/diffs", response_model=PaginatedResponse[DiffOut], tags=["History"])
+async def list_diffs(
+    page: int = Query(1, ge=1),
+    page_size: int = Query(25, ge=1, le=100),
+    target: Optional[str] = Query(None),
+    store: SnapshotStore = Depends(get_store),
+):
+    """Paginated diff history, optionally filtered by target."""
+    items, total = store.list_diffs(page=page, page_size=page_size, target=target)
+    return PaginatedResponse[DiffOut](
+        items=[DiffOut.model_validate(d) for d in items],
+        total=total,
+        page=page,
+        page_size=page_size,
+    )
+
+
+@app.get("/api/v1/tickets", response_model=PaginatedResponse[TicketOut], tags=["History"])
+async def list_tickets(
+    page: int = Query(1, ge=1),
+    page_size: int = Query(25, ge=1, le=100),
+    target: Optional[str] = Query(None),
+    store: SnapshotStore = Depends(get_store),
+):
+    """Paginated ticket history, optionally filtered by target."""
+    items, total = store.list_tickets(page=page, page_size=page_size, target=target)
+    return PaginatedResponse[TicketOut](
+        items=[TicketOut.model_validate(t) for t in items],
+        total=total,
+        page=page,
+        page_size=page_size,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Serve React frontend (must remain at end of file — catch-all is last)
+# ---------------------------------------------------------------------------
+_STATIC_DIR = Path(__file__).parent.parent / "static"
+
+if _STATIC_DIR.exists():
+    # Mount assets (JS/CSS bundles)
+    app.mount("/assets", StaticFiles(directory=str(_STATIC_DIR / "assets")), name="assets")
+
+    @app.get("/favicon.ico", include_in_schema=False)
+    async def favicon():
+        ico = _STATIC_DIR / "favicon.ico"
+        svg = _STATIC_DIR / "favicon.svg"
+        if ico.exists():
+            return FileResponse(str(ico))
+        if svg.exists():
+            return FileResponse(str(svg), media_type="image/svg+xml")
+        raise HTTPException(status_code=404)
+
+    # NOTE: This catch-all MUST be the last registered route.
+    # Any route defined after this point will be silently intercepted.
+    @app.get("/{full_path:path}", include_in_schema=False)
+    async def spa_fallback(full_path: str):
+        # Don't intercept API or health routes that aren't matched above
+        if full_path.startswith(("api/", "health", "docs", "openapi", "redoc")):
+            raise HTTPException(status_code=404)
+        index = _STATIC_DIR / "index.html"
+        if index.exists():
+            return FileResponse(str(index))
+        return {"error": "Frontend not built. Run: cd frontend && npm run build"}
