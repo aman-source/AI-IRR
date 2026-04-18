@@ -326,3 +326,35 @@ async def list_tickets(
         page=page,
         page_size=page_size,
     )
+
+
+# ---------------------------------------------------------------------------
+# Serve React frontend
+# ---------------------------------------------------------------------------
+from pathlib import Path
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
+
+_STATIC_DIR = Path(__file__).parent.parent / "static"
+
+if _STATIC_DIR.exists():
+    # Mount assets (JS/CSS bundles)
+    app.mount("/assets", StaticFiles(directory=str(_STATIC_DIR / "assets")), name="assets")
+
+    @app.get("/favicon.ico", include_in_schema=False)
+    async def favicon():
+        ico = _STATIC_DIR / "favicon.ico"
+        svg = _STATIC_DIR / "favicon.svg"
+        if ico.exists():
+            return FileResponse(str(ico))
+        if svg.exists():
+            return FileResponse(str(svg), media_type="image/svg+xml")
+        return FileResponse(str(_STATIC_DIR / "index.html"))
+
+    # Catch-all for SPA routing — serve index.html for any unmatched path
+    @app.get("/{full_path:path}", include_in_schema=False)
+    async def spa_fallback(full_path: str):
+        index = _STATIC_DIR / "index.html"
+        if index.exists():
+            return FileResponse(str(index))
+        return {"error": "Frontend not built. Run: cd frontend && npm run build"}
