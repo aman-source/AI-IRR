@@ -7,9 +7,13 @@ import time
 from contextlib import asynccontextmanager
 from typing import List, Optional
 
+from pathlib import Path
+
 from fastapi import Depends, FastAPI, HTTPException, Query
-from pydantic import ValidationError
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
+from pydantic import ValidationError
 
 from app.bgpq4_client import BGPQ4Client
 from app.config import load_config
@@ -329,12 +333,8 @@ async def list_tickets(
 
 
 # ---------------------------------------------------------------------------
-# Serve React frontend
+# Serve React frontend (must remain at end of file — catch-all is last)
 # ---------------------------------------------------------------------------
-from pathlib import Path
-from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
-
 _STATIC_DIR = Path(__file__).parent.parent / "static"
 
 if _STATIC_DIR.exists():
@@ -349,11 +349,15 @@ if _STATIC_DIR.exists():
             return FileResponse(str(ico))
         if svg.exists():
             return FileResponse(str(svg), media_type="image/svg+xml")
-        return FileResponse(str(_STATIC_DIR / "index.html"))
+        raise HTTPException(status_code=404)
 
-    # Catch-all for SPA routing — serve index.html for any unmatched path
+    # NOTE: This catch-all MUST be the last registered route.
+    # Any route defined after this point will be silently intercepted.
     @app.get("/{full_path:path}", include_in_schema=False)
     async def spa_fallback(full_path: str):
+        # Don't intercept API or health routes that aren't matched above
+        if full_path.startswith(("api/", "health", "docs", "openapi", "redoc")):
+            raise HTTPException(status_code=404)
         index = _STATIC_DIR / "index.html"
         if index.exists():
             return FileResponse(str(index))

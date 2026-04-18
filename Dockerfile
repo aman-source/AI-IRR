@@ -30,7 +30,7 @@ COPY api/ ./api/
 # Copy built frontend from stage 1
 COPY --from=frontend-builder /static ./static
 
-RUN mkdir -p ./data
+RUN mkdir -p ./data && chown -R appuser:appuser ./data
 
 USER appuser
 
