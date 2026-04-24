@@ -93,7 +93,12 @@ class BGPQ4Client:
                      bgpq4 accepts comma-separated sources: -S RADB,RPKI.
             aggregate: Whether to use -A flag for prefix aggregation.
         """
-        self.bgpq4_cmd = bgpq4_cmd or ["wsl", "bgpq4"]
+        if bgpq4_cmd is not None:
+            self.bgpq4_cmd = bgpq4_cmd
+        elif shutil.which("bgpq4"):
+            self.bgpq4_cmd = ["bgpq4"]       # native binary (Linux/Docker)
+        else:
+            self.bgpq4_cmd = ["wsl", "bgpq4"]  # Windows fallback via WSL
         self.timeout = timeout
         if sources is None:
             self.sources = ["RADB"]

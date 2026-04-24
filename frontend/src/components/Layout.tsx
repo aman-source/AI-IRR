@@ -1,48 +1,56 @@
 import { NavLink, Outlet } from 'react-router-dom';
+import { LayoutDashboard, Target, Globe, GitCompareArrows, Ticket, Radio } from 'lucide-react';
 
 const navItems = [
-  { to: '/', label: 'Overview', icon: '📊' },
-  { to: '/targets', label: 'Targets', icon: '🎯' },
-  { to: '/prefixes', label: 'Prefixes', icon: '🌐' },
-  { to: '/diffs', label: 'Diffs', icon: '🔀' },
-  { to: '/tickets', label: 'Tickets', icon: '🎫' },
+  { to: '/', label: 'Overview', icon: LayoutDashboard },
+  { to: '/targets', label: 'Targets', icon: Target },
+  { to: '/prefixes', label: 'Prefixes', icon: Globe },
+  { to: '/diffs', label: 'Diffs', icon: GitCompareArrows },
+  { to: '/tickets', label: 'Tickets', icon: Ticket },
 ];
 
 export default function Layout() {
   return (
     <div className="flex min-h-screen bg-gray-50">
-      {/* Sidebar */}
-      <aside className="w-56 bg-white border-r border-gray-200 flex flex-col">
-        <div className="px-4 py-5 border-b border-gray-200">
-          <h1 className="text-lg font-bold text-gray-900">AI-IRR</h1>
-          <p className="text-xs text-gray-500">BGP Prefix Monitor</p>
+      <aside className="w-60 bg-slate-900 flex flex-col shrink-0">
+        {/* Logo */}
+        <div className="px-5 py-5 flex items-center gap-3 border-b border-slate-800">
+          <div className="w-8 h-8 bg-blue-500 rounded-lg flex items-center justify-center shrink-0">
+            <Radio size={16} className="text-white" strokeWidth={2} />
+          </div>
+          <div>
+            <p className="text-sm font-semibold text-white leading-none">AI-IRR</p>
+            <p className="text-xs text-slate-400 mt-0.5">BGP Prefix Monitor</p>
+          </div>
         </div>
-        <nav className="flex-1 py-4 space-y-1 px-2">
-          {navItems.map(({ to, label, icon }) => (
+
+        {/* Nav */}
+        <nav className="flex-1 px-3 py-4 space-y-0.5">
+          {navItems.map(({ to, label, icon: Icon }) => (
             <NavLink
               key={to}
               to={to}
               end={to === '/'}
               className={({ isActive }) =>
-                `flex items-center gap-2 px-3 py-2 rounded-md text-sm font-medium transition-colors ${
+                `flex items-center gap-2.5 px-3 py-2 rounded-md text-sm font-medium transition-colors ${
                   isActive
-                    ? 'bg-blue-50 text-blue-700'
-                    : 'text-gray-600 hover:bg-gray-100 hover:text-gray-900'
+                    ? 'bg-slate-700 text-white'
+                    : 'text-slate-400 hover:bg-slate-800 hover:text-slate-100'
                 }`
               }
             >
-              <span>{icon}</span>
+              <Icon size={15} strokeWidth={1.75} />
               {label}
             </NavLink>
           ))}
         </nav>
-        <div className="px-4 py-3 border-t border-gray-200">
-          <p className="text-xs text-gray-400">v1.0</p>
+
+        <div className="px-5 py-4 border-t border-slate-800">
+          <p className="text-xs text-slate-600">v1.0.0</p>
         </div>
       </aside>
 
-      {/* Main content */}
-      <main className="flex-1 overflow-auto">
+      <main className="flex-1 overflow-auto min-w-0">
         <Outlet />
       </main>
     </div>

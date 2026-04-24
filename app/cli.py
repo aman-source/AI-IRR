@@ -167,8 +167,9 @@ def create_parser() -> argparse.ArgumentParser:
     )
     history_parser.add_argument(
         '--target', '-t',
-        required=True,
-        help='ASN or AS-SET to show history for (e.g., AS15169, AS-GOOGLE)'
+        required=False,
+        default=None,
+        help='ASN or AS-SET to show history for (e.g., AS15169, AS-GOOGLE). Omit to show all targets.'
     )
     history_parser.add_argument(
         '--limit', '-l',
@@ -667,48 +668,63 @@ def cmd_run_all(config: Config, args: argparse.Namespace) -> int:
 
 def cmd_history(config: Config, args: argparse.Namespace) -> int:
     """Show snapshot history."""
-    logger = get_logger('cli')
-    target = args.target.upper()
+    get_logger('cli')
     limit = args.limit
 
     store = SnapshotStore(config.database.path)
     store.migrate()
 
     try:
-        snapshots = store.get_snapshot_history(target, limit)
+        if args.target:
+            targets = [args.target.upper()]
+        else:
+            targets = store.get_unique_targets()
     finally:
         store.close()
 
-    if not snapshots:
-        print_output(f"No snapshots found for {target}", args.json, args.quiet)
+    if not targets:
+        print_output("No snapshots found.", args.json, args.quiet)
         if args.json:
-            print(json.dumps({'target': target, 'snapshots': []}))
+            print(json.dumps([]))
         return 0
 
+    all_results = []
+    store = SnapshotStore(config.database.path)
+    try:
+        for target in targets:
+            snapshots = store.get_snapshot_history(target, limit)
+            if args.json:
+                all_results.append({
+                    'target': target,
+                    'snapshots': [
+                        {
+                            'id': s.id,
+                            'timestamp': datetime.fromtimestamp(s.timestamp).isoformat(),
+                            'ipv4_count': len(s.ipv4_prefixes),
+                            'ipv6_count': len(s.ipv6_prefixes),
+                            'hash': s.content_hash,
+                            'sources': s.irr_sources,
+                        }
+                        for s in snapshots
+                    ]
+                })
+            else:
+                print(f"Snapshot history for {target}:")
+                print("-" * 80)
+                if not snapshots:
+                    print("  No snapshots.\n")
+                    continue
+                for s in snapshots:
+                    ts = datetime.fromtimestamp(s.timestamp).strftime("%Y-%m-%d %H:%M:%S")
+                    print(f"  [{s.id}] {ts}")
+                    print(f"       IPv4: {len(s.ipv4_prefixes):,} | IPv6: {len(s.ipv6_prefixes):,}")
+                    print(f"       Hash: {s.content_hash[:12]}... | Sources: {', '.join(s.irr_sources)}")
+                    print()
+    finally:
+        store.close()
+
     if args.json:
-        print(json.dumps({
-            'target': target,
-            'snapshots': [
-                {
-                    'id': s.id,
-                    'timestamp': datetime.fromtimestamp(s.timestamp).isoformat(),
-                    'ipv4_count': len(s.ipv4_prefixes),
-                    'ipv6_count': len(s.ipv6_prefixes),
-                    'hash': s.content_hash,
-                    'sources': s.irr_sources,
-                }
-                for s in snapshots
-            ]
-        }))
-    else:
-        print(f"Snapshot history for {target}:")
-        print("-" * 80)
-        for s in snapshots:
-            ts = datetime.fromtimestamp(s.timestamp).strftime("%Y-%m-%d %H:%M:%S")
-            print(f"  [{s.id}] {ts}")
-            print(f"       IPv4: {len(s.ipv4_prefixes):,} | IPv6: {len(s.ipv6_prefixes):,}")
-            print(f"       Hash: {s.content_hash[:12]}... | Sources: {', '.join(s.irr_sources)}")
-            print()
+        print(json.dumps(all_results))
 
     return 0
 

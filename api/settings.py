@@ -4,7 +4,7 @@ from pydantic_settings import BaseSettings
 
 
 class Settings(BaseSettings):
-    bgpq4_cmd: str = "wsl,bgpq4"         # Comma-separated command parts
+    bgpq4_cmd: str = ""                  # Comma-separated command parts; empty = auto-detect
     bgpq4_sources: str = "RADB,RIPE,ARIN,APNIC,LACNIC,AFRINIC,RPKI"  # Comma-separated IRR sources
     bgpq4_timeout: int = 120
     bgpq4_aggregate: bool = True
@@ -16,7 +16,9 @@ class Settings(BaseSettings):
     model_config = {"env_prefix": "IRR_API_"}
 
     @property
-    def bgpq4_cmd_list(self) -> list[str]:
+    def bgpq4_cmd_list(self) -> list[str] | None:
+        if not self.bgpq4_cmd.strip():
+            return None  # let BGPQ4Client auto-detect
         return [s.strip() for s in self.bgpq4_cmd.split(",")]
 
     @property

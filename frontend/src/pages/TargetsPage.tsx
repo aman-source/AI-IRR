@@ -1,40 +1,72 @@
 import { useEffect, useState } from 'react';
-import { api, type PrefixResponse } from '../api';
+import { RefreshCw, ServerOff, AlertCircle, Loader2 } from 'lucide-react';
+import { api, type Snapshot } from '../api';
+import PageHeader from '../components/PageHeader';
 
 function TargetRow({ target }: { target: string }) {
-  const [prefixes, setPrefixes] = useState<PrefixResponse | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [fetched, setFetched] = useState(false);
+  const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
 
-  const fetchPrefixes = () => {
-    setLoading(true);
-    api.getPrefixes(target)
-      .then((data) => { setPrefixes(data); setFetched(true); })
-      .catch(() => { setFetched(true); })
+  useEffect(() => {
+    api.getSnapshots({ target, page: 1, page_size: 1 })
+      .then((res) => setSnapshot(res.items[0] ?? null))
+      .catch(() => {})
       .finally(() => setLoading(false));
+  }, [target]);
+
+  const handleRefresh = () => {
+    setRefreshing(true);
+    api.getPrefixes(target)
+      .then(() => api.getSnapshots({ target, page: 1, page_size: 1 }))
+      .then((res) => setSnapshot(res.items[0] ?? null))
+      .catch(() => {})
+      .finally(() => setRefreshing(false));
   };
 
   return (
-    <tr className="border-t border-gray-100 hover:bg-gray-50">
-      <td className="px-4 py-3 font-mono text-sm text-gray-900">{target}</td>
-      <td className="px-4 py-3 text-sm text-gray-500">
-        {fetched && prefixes ? prefixes.ipv4_count : '—'}
+    <tr className="group border-t border-gray-100 hover:bg-gray-50 transition-colors">
+      <td className="px-6 py-3.5 font-mono text-sm font-medium text-gray-900">{target}</td>
+      <td className="px-6 py-3.5 text-sm tabular-nums text-gray-600">
+        {loading ? <Loader2 size={13} className="animate-spin text-gray-300" /> : snapshot ? snapshot.ipv4_count.toLocaleString() : <span className="text-gray-300">—</span>}
       </td>
-      <td className="px-4 py-3 text-sm text-gray-500">
-        {fetched && prefixes ? prefixes.ipv6_count : '—'}
+      <td className="px-6 py-3.5 text-sm tabular-nums text-gray-600">
+        {loading ? <Loader2 size={13} className="animate-spin text-gray-300" /> : snapshot ? snapshot.ipv6_count.toLocaleString() : <span className="text-gray-300">—</span>}
       </td>
-      <td className="px-4 py-3 text-sm text-gray-500">
-        {fetched && prefixes ? prefixes.sources_queried.join(', ') : '—'}
+      <td className="px-6 py-3.5 text-sm text-gray-500">
+        {loading ? (
+          <Loader2 size={13} className="animate-spin text-gray-300" />
+        ) : snapshot?.irr_sources?.length ? (
+          snapshot.irr_sources.map((s) => (
+            <span key={s} className="inline-block mr-1 mb-0.5 px-1.5 py-0.5 bg-gray-100 text-gray-600 text-xs rounded font-mono">
+              {s}
+            </span>
+          ))
+        ) : <span className="text-gray-300">—</span>}
       </td>
-      <td className="px-4 py-3">
+      <td className="px-6 py-3.5 text-right">
         <button
-          onClick={fetchPrefixes}
-          disabled={loading}
-          className="text-xs px-2 py-1 bg-blue-50 text-blue-700 rounded hover:bg-blue-100 disabled:opacity-50 transition-colors"
+          onClick={handleRefresh}
+          disabled={refreshing}
+          className="inline-flex items-center gap-1.5 text-xs px-2.5 py-1.5 text-gray-600 border border-gray-200 rounded-md hover:bg-gray-50 hover:border-gray-300 disabled:opacity-50 transition-colors"
+          title="Fetch fresh data from IRR (requires bgpq4)"
         >
-          {loading ? '…' : fetched ? 'Refresh' : 'Fetch'}
+          <RefreshCw size={11} className={refreshing ? 'animate-spin' : ''} />
+          {refreshing ? 'Fetching' : 'Refresh'}
         </button>
       </td>
+    </tr>
+  );
+}
+
+function SkeletonRow() {
+  return (
+    <tr className="border-t border-gray-100 animate-pulse">
+      {[40, 20, 20, 48, 16].map((w, i) => (
+        <td key={i} className="px-6 py-3.5">
+          <div className={`h-4 bg-gray-100 rounded w-${w}`} />
+        </td>
+      ))}
     </tr>
   );
 }
@@ -52,43 +84,44 @@ export default function TargetsPage() {
   }, []);
 
   return (
-    <div className="p-6">
-      <h2 className="text-2xl font-bold text-gray-900 mb-1">Targets</h2>
-      <p className="text-sm text-gray-500 mb-6">Monitored ASNs and AS-SETs</p>
+    <div>
+      <PageHeader title="Targets" description="Monitored ASNs and AS-SETs" />
+      <div className="px-8 py-6">
+        {error && (
+          <div className="mb-5 flex items-start gap-2.5 p-3.5 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">
+            <AlertCircle size={15} className="mt-0.5 shrink-0" />
+            {error}
+          </div>
+        )}
 
-      {error && (
-        <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-md text-sm text-red-700">
-          {error}
-        </div>
-      )}
-
-      {loading ? (
-        <p className="text-sm text-gray-400 animate-pulse">Loading…</p>
-      ) : targets.length === 0 ? (
-        <div className="text-center py-12 text-gray-400">
-          <p className="text-4xl mb-2">🌐</p>
-          <p className="text-sm">No targets found. Add targets in config.yaml.</p>
-        </div>
-      ) : (
-        <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
+        <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
           <table className="w-full text-left">
-            <thead className="bg-gray-50 text-xs font-medium text-gray-500 uppercase tracking-wider">
-              <tr>
-                <th className="px-4 py-3">Target</th>
-                <th className="px-4 py-3">IPv4 Prefixes</th>
-                <th className="px-4 py-3">IPv6 Prefixes</th>
-                <th className="px-4 py-3">IRR Sources</th>
-                <th className="px-4 py-3"></th>
+            <thead>
+              <tr className="border-b border-gray-200 bg-gray-50">
+                <th className="px-6 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">Target</th>
+                <th className="px-6 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">IPv4</th>
+                <th className="px-6 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">IPv6</th>
+                <th className="px-6 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">IRR Sources</th>
+                <th className="px-6 py-3" />
               </tr>
             </thead>
             <tbody>
-              {targets.map((t) => (
-                <TargetRow key={t} target={t} />
-              ))}
+              {loading ? (
+                [...Array(4)].map((_, i) => <SkeletonRow key={i} />)
+              ) : targets.length === 0 ? (
+                <tr>
+                  <td colSpan={5} className="px-6 py-16 text-center">
+                    <ServerOff size={32} strokeWidth={1.5} className="mx-auto mb-3 text-gray-200" />
+                    <p className="text-sm text-gray-400">No targets configured. Add targets in <code className="font-mono bg-gray-100 px-1 rounded">config.yaml</code>.</p>
+                  </td>
+                </tr>
+              ) : (
+                targets.map((t) => <TargetRow key={t} target={t} />)
+              )}
             </tbody>
           </table>
         </div>
-      )}
+      </div>
     </div>
   );
 }
