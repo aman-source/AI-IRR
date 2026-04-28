@@ -10,7 +10,8 @@ class Settings(BaseSettings):
     bgpq4_aggregate: bool = True
     log_level: str = "INFO"
     cors_origins: str = "*"
-    db_path: str = "./data/irr.sqlite"
+    api_key: str = ""                     # Set IRR_API_API_KEY to require auth on all endpoints
+    db_path: str = "./data/irr.sqlite"    # Path to SQLite DB written by the CLI
     config_path: str = "./config.yaml"
 
     model_config = {"env_prefix": "IRR_API_"}

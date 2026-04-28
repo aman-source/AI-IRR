@@ -33,7 +33,17 @@ class TeamsNotifier:
         self.webhook_url = webhook_url
         self.timeout = timeout
 
-    def notify(self, target: str, diff: DiffResult, ticket_id: Optional[str] = None, dry_run: bool = False) -> bool:
+    def notify(
+        self,
+        target: str,
+        diff: DiffResult,
+        ticket_id: Optional[str] = None,
+        dry_run: bool = False,
+        ipv4_raw_count: int = 0,
+        ipv4_aggregated_count: int = 0,
+        ipv6_raw_count: int = 0,
+        ipv6_aggregated_count: int = 0,
+    ) -> bool:
         """
         Send a Teams alert for detected prefix changes.
 
@@ -42,6 +52,10 @@ class TeamsNotifier:
             diff: The diff result with change details.
             ticket_id: Ticket ID if one was created, else None.
             dry_run: If True, log but do not actually send.
+            ipv4_raw_count: Raw IPv4 prefix count before aggregation.
+            ipv4_aggregated_count: Aggregated IPv4 prefix count.
+            ipv6_raw_count: Raw IPv6 prefix count before aggregation.
+            ipv6_aggregated_count: Aggregated IPv6 prefix count.
 
         Returns:
             True if the alert was sent (or dry-run), False on error.
@@ -50,7 +64,11 @@ class TeamsNotifier:
             logger.debug("Teams webhook URL not configured, skipping notification")
             return False
 
-        payload = self._build_payload(target, diff, ticket_id)
+        payload = self._build_payload(
+            target, diff, ticket_id,
+            ipv4_raw_count, ipv4_aggregated_count,
+            ipv6_raw_count, ipv6_aggregated_count,
+        )
 
         if dry_run:
             logger.info(
@@ -97,7 +115,16 @@ class TeamsNotifier:
             )
             return False
 
-    def _build_payload(self, target: str, diff: DiffResult, ticket_id: Optional[str]) -> dict:
+    def _build_payload(
+        self,
+        target: str,
+        diff: DiffResult,
+        ticket_id: Optional[str],
+        ipv4_raw_count: int = 0,
+        ipv4_aggregated_count: int = 0,
+        ipv6_raw_count: int = 0,
+        ipv6_aggregated_count: int = 0,
+    ) -> dict:
         """Build the Adaptive Card JSON payload sent to the Power Automate webhook."""
         change_lines = []
         if diff.added_v4:
@@ -124,6 +151,8 @@ class TeamsNotifier:
                 "facts": [
                     {"title": "Target", "value": target},
                     {"title": "Summary", "value": diff.summary},
+                    {"title": "IPv4 Prefixes", "value": f"{ipv4_raw_count} raw → {ipv4_aggregated_count} aggregated"},
+                    {"title": "IPv6 Prefixes", "value": f"{ipv6_raw_count} raw → {ipv6_aggregated_count} aggregated"},
                     {"title": "Ticket ID", "value": ticket_id or "N/A"},
                     {"title": "Diff Hash", "value": diff.diff_hash},
                     {"title": "Timestamp", "value": timestamp},

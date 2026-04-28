@@ -181,8 +181,8 @@ class TestBGPQ4Client:
         assert result.ipv4_prefixes == {"10.0.0.0/8", "172.16.0.0/12"}
 
     @patch('subprocess.run')
-    def test_command_flags_ipv4_with_aggregation(self, mock_run):
-        """Verify correct flags for IPv4 with aggregation."""
+    def test_command_flags_ipv4(self, mock_run):
+        """Verify correct flags for IPv4 — aggregation is Python-side, no -A flag."""
         mock_run.return_value = MagicMock(
             returncode=0, stdout='{"pl": []}', stderr=""
         )
@@ -194,7 +194,7 @@ class TestBGPQ4Client:
         assert cmd[0:2] == ["wsl", "bgpq4"]
         assert "-4" in cmd
         assert "-j" in cmd
-        assert "-A" in cmd
+        assert "-A" not in cmd
         assert "-S" in cmd
         idx = cmd.index("-S")
         assert cmd[idx + 1] == "RADB"
@@ -242,8 +242,8 @@ class TestBGPQ4Client:
         assert "AS-GOOGLE" in cmd
 
     @patch('subprocess.run')
-    def test_command_flags_no_aggregation(self, mock_run):
-        """Verify -A is not present when aggregation is disabled."""
+    def test_command_flags_no_aggregation_flag(self, mock_run):
+        """Verify -A is never passed — aggregation is always Python-side."""
         mock_run.return_value = MagicMock(
             returncode=0, stdout='{"pl": []}', stderr=""
         )

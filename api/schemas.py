@@ -50,7 +50,9 @@ class ErrorResponse(BaseModel):
     errors: list[str] = []
 
 
-# --- Dashboard API schemas ---
+# ---------------------------------------------------------------------------
+# Dashboard API schemas
+# ---------------------------------------------------------------------------
 
 class SnapshotOut(BaseModel):
     id: int
@@ -97,8 +99,6 @@ class TicketOut(BaseModel):
     target: str
     diff_id: int
     external_ticket_id: Optional[str] = None
-    # Note: request_payload and response_payload are intentionally excluded
-    # from the API surface — they may contain sensitive integration data.
     status: str
     created_at: int
 
@@ -119,8 +119,8 @@ class PaginatedResponse(BaseModel, Generic[T]):
 
 class OverviewStats(BaseModel):
     total_targets: int
-    last_run_at: Optional[int] = None  # Unix timestamp or None
-    recent_diffs: int            # diffs in last 24h with has_changes=True
+    last_run_at: Optional[int] = None
+    recent_diffs: int
     open_tickets: int
 
 
@@ -141,3 +141,55 @@ class RunResult(BaseModel):
     diffs_found: int
     tickets_created: int
     errors: List[str]
+
+
+# ---------------------------------------------------------------------------
+# Per-target DB read schemas (used by /api/v1/snapshots/{target} etc.)
+# ---------------------------------------------------------------------------
+
+class TargetSummary(BaseModel):
+    target: str
+    target_type: str
+    ipv4_count: int
+    ipv6_count: int
+    last_snapshot: str   # ISO 8601
+    sources: list[str]
+
+
+class TargetsResponse(BaseModel):
+    targets: list[TargetSummary]
+    total: int
+
+
+class SnapshotResponse(BaseModel):
+    id: int
+    target: str
+    timestamp: str       # ISO 8601
+    ipv4_prefixes: list[str]
+    ipv6_prefixes: list[str]
+    ipv4_count: int
+    ipv6_count: int
+    sources: list[str]
+    content_hash: str
+
+
+class SnapshotHistoryResponse(BaseModel):
+    target: str
+    snapshots: list[SnapshotResponse]
+
+
+class DiffResponse(BaseModel):
+    id: int
+    target: str
+    timestamp: str       # ISO 8601
+    has_changes: bool
+    added_v4: list[str]
+    removed_v4: list[str]
+    added_v6: list[str]
+    removed_v6: list[str]
+    summary: str
+
+
+class DiffHistoryResponse(BaseModel):
+    target: str
+    diffs: list[DiffResponse]

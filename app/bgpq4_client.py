@@ -165,8 +165,6 @@ class BGPQ4Client:
         cmd = list(self.bgpq4_cmd)
         cmd.append("-6" if ipv6 else "-4")
         cmd.append("-j")  # JSON output
-        if self.aggregate:
-            cmd.append("-A")  # Aggregate prefixes
         cmd.extend(["-S", ",".join(self.sources)])
         cmd.extend(["-l", "pl"])
         cmd.append(target)
