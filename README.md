@@ -18,28 +18,57 @@ Uses [BGPQ4](https://github.com/bgp/bgpq4) for IRR queries, which handles AS-SET
 - **Teams Alerts**: Post Adaptive Card notifications to Microsoft Teams via Power Automate webhook
 - **Idempotency**: Prevent duplicate tickets using diff hashing
 - **Dry-Run Mode**: Test the workflow without creating actual tickets
-- **Optional API**: FastAPI service for remote/shared access
+- **Web Dashboard**: React + Tailwind dashboard with overview, targets, prefixes, diffs, tickets pages
+- **Docker Deployment**: Single-container 3-stage build (Node frontend + Python backend)
+- **REST API**: FastAPI service with paginated endpoints for all data
 
-## Prerequisites
+## Setup
 
-- Python 3.10+
-- [WSL](https://learn.microsoft.com/en-us/windows/wsl/install) (Windows) with bgpq4 installed
-- pip
+### Option 1: Docker (Recommended)
 
-### Install bgpq4
+Requires only Docker. Everything included — bgpq4, Python, frontend.
 
 ```bash
-# In WSL
-sudo apt update && sudo apt install -y bgpq4
+# Build
+docker build -t ai-irr .
 
-# Verify (query all 7 sources for AS-BYTEDANCE)
-wsl bgpq4 -4 -j -A -S RADB,ARIN,RIPE,APNIC,LACNIC,AFRINIC,RPKI -l pl AS-BYTEDANCE
+# Run
+docker run -p 8000:8000 \
+  -v $(pwd)/data:/app/data \
+  -v $(pwd)/config.yaml:/app/config.yaml \
+  ai-irr
 ```
 
-## Installation
+Open `http://localhost:8000` for dashboard. CLI available inside container:
 
 ```bash
-# Clone the repository
+docker exec -it <container_id> python -m app.cli run-all --dry-run
+```
+
+### Option 2: Local Development
+
+#### Prerequisites
+
+- Python 3.10+
+- Node.js 18+ (for frontend)
+- [WSL](https://learn.microsoft.com/en-us/windows/wsl/install) (Windows) with bgpq4 installed
+
+#### Install bgpq4
+
+```bash
+# In WSL (Windows)
+sudo apt update && sudo apt install -y bgpq4
+
+# Verify
+wsl bgpq4 -4 -j -A -S RADB,ARIN,RIPE,APNIC,LACNIC,AFRINIC,RPKI -l pl AS-BYTEDANCE
+
+# On Linux (native)
+sudo apt install -y bgpq4
+```
+
+#### Install Backend
+
+```bash
 cd AI-IRR
 
 # Create virtual environment
@@ -49,6 +78,34 @@ python -m venv .venv
 
 # Install dependencies
 pip install -r requirements.txt
+```
+
+#### Install Frontend
+
+```bash
+cd frontend
+npm install
+```
+
+#### Run (Development)
+
+```bash
+# Terminal 1: Backend
+uvicorn api.main:app --reload --port 8000
+
+# Terminal 2: Frontend dev server (hot reload, proxies /api to backend)
+cd frontend && npm run dev
+```
+
+- Frontend dev: `http://localhost:5173`
+- API direct: `http://localhost:8000`
+
+#### Build Frontend for Production
+
+```bash
+cd frontend && npm run build
+# Output goes to static/ — FastAPI serves it automatically
+# Now http://localhost:8000 serves both API and dashboard
 ```
 
 ## Quick Start
@@ -224,6 +281,64 @@ pytest tests/test_aggregation.py -v
 0 6 * * * cd /path/to/AI-IRR && /path/to/.venv/bin/python -m app.cli run-all
 ```
 
+## Web Dashboard
+
+Full React dashboard served by FastAPI. Single container deployment.
+
+### Features
+
+- **Overview** — target count, recent diffs, open tickets, last run time, "Run Now" button
+- **Targets** — monitored ASNs/AS-SETs with auto-fetched IPv4/IPv6 counts and IRR sources
+- **Prefixes** — look up current IRR prefixes for any target
+- **Diffs** — paginated change history with expandable added/removed prefix details
+- **Tickets** — paginated ticket list with status badges
+
+### Running Locally (Development)
+
+```bash
+# Terminal 1: Backend
+uvicorn api.main:app --reload --port 8000
+
+# Terminal 2: Frontend (proxies /api to backend)
+cd frontend && npm install && npm run dev
+```
+
+Dashboard at `http://localhost:5173`
+
+### Docker Deployment
+
+```bash
+# Build (3-stage: Node frontend build → Python deps → runtime)
+docker build -t ai-irr .
+
+# Run (mount data + config for persistence)
+docker run -p 8000:8000 \
+  -v $(pwd)/data:/app/data \
+  -v $(pwd)/config.yaml:/app/config.yaml \
+  ai-irr
+```
+
+Dashboard at `http://localhost:8000`
+
+### API Endpoints
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/health` | Health check |
+| GET | `/api/v1/targets` | List monitored targets |
+| GET | `/api/v1/overview` | Dashboard stats |
+| POST | `/api/v1/run` | Trigger fetch+diff+ticket for all targets |
+| GET | `/api/v1/snapshots?target=X&page=1&limit=20` | Paginated snapshots |
+| GET | `/api/v1/diffs?target=X&page=1&limit=20` | Paginated diffs |
+| GET | `/api/v1/tickets?target=X&page=1&limit=20` | Paginated tickets |
+| GET | `/api/v1/prefixes/{target}` | Live prefix lookup |
+
+### Tech Stack
+
+- **Frontend**: React 19, TypeScript, Tailwind CSS v4, Vite, React Router v7, Lucide icons
+- **Backend**: FastAPI, SQLite, Pydantic v2
+- **Build**: 3-stage Dockerfile (Node → Python → runtime)
+
 ## Project Structure
 
 ```
@@ -231,21 +346,32 @@ AI-IRR/
 ├── app/
 │   ├── __init__.py
 │   ├── bgpq4_client.py      # BGPQ4 IRR client — multi-source, Python aggregation
-│   ├── api_proxy_client.py  # Optional API proxy client
-│   ├── config.py            # Configuration loading and validation
-│   ├── cli.py               # CLI entry point
-│   ├── store.py             # SQLite database layer
-│   ├── diff.py              # Diff computation
-│   ├── ticketing.py         # Ticketing API client
-│   ├── teams.py             # Microsoft Teams Adaptive Card notifier
-│   └── logger.py            # Structured logging
+│   ├── api_proxy_client.py   # Optional API proxy client
+│   ├── config.py             # Configuration loading and validation
+│   ├── cli.py                # CLI entry point
+│   ├── store.py              # SQLite database layer
+│   ├── diff.py               # Diff computation
+│   ├── ticketing.py          # Ticketing API client
+│   ├── teams.py              # Microsoft Teams Adaptive Card notifier
+│   └── logger.py             # Structured logging
 ├── api/
-│   ├── main.py              # FastAPI application
-│   ├── schemas.py           # Pydantic models
-│   ├── settings.py          # API settings
-│   └── dependencies.py      # Dependency injection
+│   ├── main.py               # FastAPI application + static file serving
+│   ├── schemas.py            # Pydantic response models
+│   ├── settings.py           # API settings
+│   └── dependencies.py       # Dependency injection
+├── frontend/
+│   ├── src/
+│   │   ├── api/              # API client + TypeScript types
+│   │   ├── components/       # Layout, sidebar navigation
+│   │   ├── pages/            # Overview, Targets, Prefixes, Diffs, Tickets
+│   │   ├── App.tsx           # Router setup
+│   │   └── main.tsx          # Entry point
+│   ├── vite.config.ts        # Build config (outputs to ../static/)
+│   ├── tailwind.config.ts
+│   └── package.json
+├── static/                   # Built frontend assets (generated)
 ├── tests/
-│   ├── test_aggregation.py  # Python aggregation + AS-BYTEDANCE scenario
+│   ├── test_aggregation.py
 │   ├── test_bgpq4_client.py
 │   ├── test_cli.py
 │   ├── test_config.py
@@ -255,8 +381,9 @@ AI-IRR/
 │   └── test_ticketing.py
 ├── docs/
 │   └── MULTI_IRR_SOURCES.md
-├── data/                    # Database files (runtime)
-├── config.yaml              # Configuration
+├── data/                     # Database files (runtime)
+├── config.yaml               # Configuration
+├── Dockerfile                # 3-stage build
 ├── requirements.txt
 ├── pyproject.toml
 └── README.md
